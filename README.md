@@ -12,6 +12,19 @@ Given a circle of radius R centered at the origin and a square with side length
 solution requires careful geometric decomposition based on the relationship
 between R and s.
 
+## Goal: integrating over all circle centers
+
+If the objective is to integrate the overlap area over every possible circle
+center z in the plane, define A(z) = ∫ 1_S(u) · 1_C(u−z) du (a convolution).
+Swapping the integrals yields
+
+∫ A(z) dz = ∫ 1_S(u) (∫ 1_C(u−z) dz) du = (area of C) · (area of S)
+          = (πR²) · (4s²).
+
+Thus, over all of ℝ² the total integral is just the product of the two areas,
+so the eight positional cases collapse. If circle centers are restricted to a
+bounded window instead, integrate this same convolution only over that window.
+
 ## Case decomposition
 
 The image `Rough/Area of overlap between circle and square - 2D (Tidy Working).png`
