@@ -12,6 +12,12 @@ Given a circle of radius R centered at the origin and a square with side length
 solution requires careful geometric decomposition based on the relationship
 between R and s.
 
+The interactive `circle-square-overlap.html` samples the overlap kernel
+A(cx, cy) = ∫ 1_S(u) · 1_C(u−(cx,cy)) du — i.e., the convolution of the square
+and circle indicator functions at the offset (cx, cy). Both the 2D drag view
+and the 3D surface plot simply evaluate this kernel for different circle
+centers; they do not integrate it further.
+
 ## Goal: integrating over all circle centers
 
 If the objective is to integrate the overlap area over every possible circle

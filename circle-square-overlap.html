@@ -127,7 +127,7 @@
 
         <div class="note">
             <strong>Normalized problem:</strong> Square width = 2 (from -1 to 1), Circle radius R ∈ [0, 1].<br>
-            Drag the circle to explore. The app uses the exact formulas from the Haskell implementation.
+            Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the square and circle indicators at that offset). The 3D view is this same kernel over a grid of centers. The formulas mirror the Haskell implementation.
         </div>
 
         <div class="controls">
@@ -549,6 +549,9 @@
                 return Math.abs(area);
             }
 
+            // calculateOverlap returns the overlap kernel A(cx, cy):
+            // the area of intersection between the square and a circle centered at (cx, cy).
+            // Both the 2D view (dragging) and 3D surface plot just sample this kernel.
             calculateOverlap(cx, cy, R) {
                 this.debugText = `cx=${cx.toFixed(3)}, cy=${cy.toFixed(3)}, R=${R.toFixed(3)}\n`;
 
