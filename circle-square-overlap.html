@@ -128,6 +128,7 @@
         <div class="note">
             <strong>Normalized problem:</strong> Square width = 2 (from -1 to 1), Circle radius R ∈ [0, 1].<br>
             Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the square and circle indicators at that offset). The 3D view is this same kernel over a grid of centers. The formulas mirror the Haskell implementation.
+            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the square. This boundary-walk pattern generalizes to other polygon/shape overlaps by swapping in their boundary primitives and intersection tests.
         </div>
 
         <div class="controls">

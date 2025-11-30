@@ -18,6 +18,12 @@ and circle indicator functions at the offset (cx, cy). Both the 2D drag view
 and the 3D surface plot simply evaluate this kernel for different circle
 centers; they do not integrate it further.
 
+Algorithm overview (HTML viewer):
+- Find circle–square edge intersections.
+- For each square edge, add the signed triangle area from the circle center to edge portions inside the circle.
+- For circle arcs that lie inside the square (between consecutive intersection angles), add the corresponding circular sector areas.
+- The boundary-walk structure generalizes to other shapes: replace square edges with the target shape’s boundary segments/curves and use the appropriate intersection tests plus triangle/sector (or curve) area primitives.
+
 ## Goal: integrating over all circle centers
 
 If the objective is to integrate the overlap area over every possible circle
