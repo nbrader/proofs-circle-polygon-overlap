@@ -397,12 +397,12 @@
                 const dotCH = cornerVec.x * horizVec.x + cornerVec.y * horizVec.y;
                 const dotCV = cornerVec.x * vertVec.x + cornerVec.y * vertVec.y;
 
-                const crossMagHV = Math.sqrt(Math.max(0, lenH2 * lenV2 - dotHV * dotHV));
+                const crossMagHV = Math.sqrt(lenH2 * lenV2 - dotHV * dotHV);
                 const sectorTheta = Math.atan2(crossMagHV, dotHV);
                 const sectorArea = 0.5 * r * r * sectorTheta;
 
-                const triangleHoriz = 0.5 * Math.sqrt(Math.max(0, lenC2 * lenH2 - dotCH * dotCH));
-                const triangleVert = 0.5 * Math.sqrt(Math.max(0, lenC2 * lenV2 - dotCV * dotCV));
+                const triangleHoriz = 0.5 * Math.sqrt(lenC2 * lenH2 - dotCH * dotCH);
+                const triangleVert = 0.5 * Math.sqrt(lenC2 * lenV2 - dotCV * dotCV);
 
                 return sectorArea + signHoriz * triangleHoriz + signVert * triangleVert;
             }
