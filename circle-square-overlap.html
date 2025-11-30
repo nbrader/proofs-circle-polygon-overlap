@@ -388,9 +388,21 @@
                 return this.segmentArea(r, sagitta_y);
             }
 
-            caseFOverlapArea(r, x, y) {
-                // From Haskell: circleArea r - caseGOverlapArea r (x, -y) - segmentArea r x
-                return this.circleArea(r) - this.caseGOverlapArea(r, x, -y) - this.segmentArea(r, x);
+            caseFOverlapArea(r, relX, relY) {
+                // Case F (mixed: outside one edge, inside the other, corner in circle)
+                // Haskell: circleArea - caseD(r, x, -y) - segmentArea r x
+                // relX, relY are signed offsets from the corner: (ax - s, ay - s)
+                // Outside +x only
+                if (relX > 0 && relY <= 0) {
+                    const insideY = -relY; // distance from center to corner vertically
+                    return this.circleArea(r) - this.caseDOverlapArea(r, relX, insideY) - this.segmentArea(r, relX);
+                }
+                // Outside +y only (mirror)
+                if (relY > 0 && relX <= 0) {
+                    const insideX = -relX;
+                    return this.circleArea(r) - this.caseDOverlapArea(r, relY, insideX) - this.segmentArea(r, relY);
+                }
+                return 0;
             }
 
             caseGOverlapArea(r, x, y) {
@@ -554,7 +566,9 @@
                         if (cornerInCircle) {
                             this.currentCase = 'F';
                             this.debugText += 'Case F: Mixed position, corner inside circle\n';
-                            return this.caseFOverlapArea(R, dx, dy);
+                            const relX = ax - s; // signed offset from corner
+                            const relY = ay - s;
+                            return this.caseFOverlapArea(R, relX, relY);
                         }
                         // else fall through to check E/H below
                     }
