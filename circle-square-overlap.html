@@ -123,18 +123,54 @@
 </head>
 <body>
     <div class="container">
-        <h1>Circle-Square Overlap Explorer</h1>
+        <h1>Circle-Shape Overlap Explorer</h1>
 
         <div class="note">
-            <strong>Normalized problem:</strong> Square width = 2 (from -1 to 1), Circle radius R ∈ [0, 1].<br>
-            Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the square and circle indicators at that offset). The 3D view is this same kernel over a grid of centers. The formulas mirror the Haskell implementation.
-            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the square. This boundary-walk pattern generalizes to other polygon/shape overlaps by swapping in their boundary primitives and intersection tests.
+            <strong>General overlap problem:</strong> Compute the overlap area between a circle of arbitrary radius and various polygon shapes.<br>
+            Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the shape and circle indicators at that offset). The 3D view is this same kernel over a grid of centers.
+            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the shape. This boundary-walk pattern generalizes to other polygon/shape overlaps by swapping in their boundary primitives and intersection tests.
         </div>
 
         <div class="controls">
             <div class="control-group">
+                <label for="shapeType">Shape Type:</label>
+                <select id="shapeType">
+                    <option value="square">Square</option>
+                    <option value="rectangle">Rectangle</option>
+                    <option value="triangle">Triangle (Equilateral)</option>
+                    <option value="pentagon">Pentagon (Regular)</option>
+                    <option value="hexagon">Hexagon (Regular)</option>
+                    <option value="octagon">Octagon (Regular)</option>
+                    <option value="custom">Custom Polygon</option>
+                </select>
+            </div>
+            <div class="control-group" id="squareControls">
+                <label for="squareSize">Square Half-Side:</label>
+                <input type="range" id="squareSize" min="0.5" max="3.0" value="1.0" step="0.1">
+                <span class="value-display" id="squareSizeValue">1.00</span>
+            </div>
+            <div class="control-group" id="rectangleControls" style="display:none;">
+                <label for="rectWidth">Rectangle Half-Width:</label>
+                <input type="range" id="rectWidth" min="0.5" max="3.0" value="1.5" step="0.1">
+                <span class="value-display" id="rectWidthValue">1.50</span>
+            </div>
+            <div class="control-group" id="rectangleHeightControls" style="display:none;">
+                <label for="rectHeight">Rectangle Half-Height:</label>
+                <input type="range" id="rectHeight" min="0.5" max="3.0" value="1.0" step="0.1">
+                <span class="value-display" id="rectHeightValue">1.00</span>
+            </div>
+            <div class="control-group" id="regularPolyControls" style="display:none;">
+                <label for="polyRadius">Polygon Radius:</label>
+                <input type="range" id="polyRadius" min="0.5" max="3.0" value="1.0" step="0.1">
+                <span class="value-display" id="polyRadiusValue">1.00</span>
+            </div>
+            <div class="control-group" id="customPolyControls" style="display:none;">
+                <label for="customVertices">Vertices (JSON):</label>
+                <textarea id="customVertices" rows="3" style="flex: 1; font-family: monospace; font-size: 12px;">[[-1,-1],[1,-1],[1,1],[-1,1]]</textarea>
+            </div>
+            <div class="control-group">
                 <label for="radius">Circle Radius (R):</label>
-                <input type="range" id="radius" min="0.1" max="1.0" value="0.5" step="0.01">
+                <input type="range" id="radius" min="0.1" max="5.0" value="0.5" step="0.05">
                 <span class="value-display" id="radiusValue">R = 0.50</span>
             </div>
             <div class="control-group">
@@ -201,7 +237,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
         const CANVAS_CENTER = 300;
-        const SQUARE_HALF_SIDE = 1.0;  // Normalized: square is [-1, 1] × [-1, 1]
+        const SQUARE_HALF_SIDE = 1.0;  // Legacy constant, now configurable
 
         class CircleSquareOverlap {
             constructor() {
@@ -209,23 +245,90 @@
                 this.ctx = this.canvas2d.getContext('2d');
                 this.canvas3d = document.getElementById('canvas3d');
 
-                this.R = 0.5;  // Circle radius in [0, 1]
+                this.R = 0.5;  // Circle radius (now arbitrary)
                 this.scale = 200;  // pixels per unit
-                this.cx = 0;  // Circle center x in [-?, ?]
-                this.cy = 0;  // Circle center y in [-?, ?]
+                this.cx = 0;  // Circle center x
+                this.cy = 0;  // Circle center y
 
                 this.isDragging = false;
                 this.resolution = 120;
                 this.currentCase = '';
                 this.debugText = '';
 
+                // Shape properties
+                this.shapeType = 'square';
+                this.squareSize = 1.0;
+                this.rectWidth = 1.5;
+                this.rectHeight = 1.0;
+                this.polyRadius = 1.0;
+                this.customVertices = [[-1,-1],[1,-1],[1,1],[-1,1]];
+                this.shapeVertices = [];
+
+                this.updateShapeVertices();
                 this.setupControls();
+                this.updateShapeControls();  // Initialize control visibility
                 this.setup2DCanvas();
                 this.setup3DCanvas();
                 this.updateDisplay();
             }
 
             setupControls() {
+                // Shape selector
+                document.getElementById('shapeType').addEventListener('change', (e) => {
+                    this.shapeType = e.target.value;
+                    this.updateShapeControls();
+                    this.updateShapeVertices();
+                    this.updateDisplay();
+                    this.update3DSurface();
+                });
+
+                // Square controls
+                document.getElementById('squareSize').addEventListener('input', (e) => {
+                    this.squareSize = parseFloat(e.target.value);
+                    document.getElementById('squareSizeValue').textContent = this.squareSize.toFixed(2);
+                    this.updateShapeVertices();
+                    this.updateDisplay();
+                    this.update3DSurface();
+                });
+
+                // Rectangle controls
+                document.getElementById('rectWidth').addEventListener('input', (e) => {
+                    this.rectWidth = parseFloat(e.target.value);
+                    document.getElementById('rectWidthValue').textContent = this.rectWidth.toFixed(2);
+                    this.updateShapeVertices();
+                    this.updateDisplay();
+                    this.update3DSurface();
+                });
+
+                document.getElementById('rectHeight').addEventListener('input', (e) => {
+                    this.rectHeight = parseFloat(e.target.value);
+                    document.getElementById('rectHeightValue').textContent = this.rectHeight.toFixed(2);
+                    this.updateShapeVertices();
+                    this.updateDisplay();
+                    this.update3DSurface();
+                });
+
+                // Regular polygon controls
+                document.getElementById('polyRadius').addEventListener('input', (e) => {
+                    this.polyRadius = parseFloat(e.target.value);
+                    document.getElementById('polyRadiusValue').textContent = this.polyRadius.toFixed(2);
+                    this.updateShapeVertices();
+                    this.updateDisplay();
+                    this.update3DSurface();
+                });
+
+                // Custom vertices
+                document.getElementById('customVertices').addEventListener('input', (e) => {
+                    try {
+                        this.customVertices = JSON.parse(e.target.value);
+                        this.updateShapeVertices();
+                        this.updateDisplay();
+                        this.update3DSurface();
+                    } catch (err) {
+                        console.error('Invalid JSON for vertices:', err);
+                    }
+                });
+
                 document.getElementById('radius').addEventListener('input', (e) => {
                     this.R = parseFloat(e.target.value);
                     document.getElementById('radiusValue').textContent = `R = ${this.R.toFixed(2)}`;
@@ -256,6 +359,113 @@
                 document.getElementById('showDebug').addEventListener('change', (e) => {
                     document.getElementById('debugInfo').style.display = e.target.checked ? 'block' : 'none';
                 });
+            }
+
+            updateShapeControls() {
+                // Hide all shape-specific controls
+                document.getElementById('squareControls').style.display = 'none';
+                document.getElementById('rectangleControls').style.display = 'none';
+                document.getElementById('rectangleHeightControls').style.display = 'none';
+                document.getElementById('regularPolyControls').style.display = 'none';
+                document.getElementById('customPolyControls').style.display = 'none';
+
+                // Show relevant controls
+                switch(this.shapeType) {
+                    case 'square':
+                        document.getElementById('squareControls').style.display = 'flex';
+                        break;
+                    case 'rectangle':
+                        document.getElementById('rectangleControls').style.display = 'flex';
+                        document.getElementById('rectangleHeightControls').style.display = 'flex';
+                        break;
+                    case 'triangle':
+                    case 'pentagon':
+                    case 'hexagon':
+                    case 'octagon':
+                        document.getElementById('regularPolyControls').style.display = 'flex';
+                        break;
+                    case 'custom':
+                        document.getElementById('customPolyControls').style.display = 'flex';
+                        break;
+                }
+            }
+
+            updateShapeVertices() {
+                switch(this.shapeType) {
+                    case 'square': {
+                        const s = this.squareSize;
+                        this.shapeVertices = [
+                            { x: -s, y: -s },
+                            { x: s, y: -s },
+                            { x: s, y: s },
+                            { x: -s, y: s }
+                        ];
+                        break;
+                    }
+                    case 'rectangle': {
+                        const w = this.rectWidth;
+                        const h = this.rectHeight;
+                        this.shapeVertices = [
+                            { x: -w, y: -h },
+                            { x: w, y: -h },
+                            { x: w, y: h },
+                            { x: -w, y: h }
+                        ];
+                        break;
+                    }
+                    case 'triangle': {
+                        const r = this.polyRadius;
+                        this.shapeVertices = [];
+                        for (let i = 0; i < 3; i++) {
+                            const angle = (i * 2 * Math.PI / 3) - Math.PI / 2;
+                            this.shapeVertices.push({
+                                x: r * Math.cos(angle),
+                                y: r * Math.sin(angle)
+                            });
+                        }
+                        break;
+                    }
+                    case 'pentagon': {
+                        const r = this.polyRadius;
+                        this.shapeVertices = [];
+                        for (let i = 0; i < 5; i++) {
+                            const angle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+                            this.shapeVertices.push({
+                                x: r * Math.cos(angle),
+                                y: r * Math.sin(angle)
+                            });
+                        }
+                        break;
+                    }
+                    case 'hexagon': {
+                        const r = this.polyRadius;
+                        this.shapeVertices = [];
+                        for (let i = 0; i < 6; i++) {
+                            const angle = (i * 2 * Math.PI / 6) - Math.PI / 2;
+                            this.shapeVertices.push({
+                                x: r * Math.cos(angle),
+                                y: r * Math.sin(angle)
+                            });
+                        }
+                        break;
+                    }
+                    case 'octagon': {
+                        const r = this.polyRadius;
+                        this.shapeVertices = [];
+                        for (let i = 0; i < 8; i++) {
+                            const angle = (i * 2 * Math.PI / 8) - Math.PI / 2;
+                            this.shapeVertices.push({
+                                x: r * Math.cos(angle),
+                                y: r * Math.sin(angle)
+                            });
+                        }
+                        break;
+                    }
+                    case 'custom': {
+                        this.shapeVertices = this.customVertices.map(v => ({ x: v[0], y: v[1] }));
+                        break;
+                    }
+                }
             }
 
             pixelToWorld(px, py) {
@@ -453,6 +663,21 @@
                 return 0;
             }
 
+            // Check if a point is inside the polygon using ray casting algorithm
+            pointInPolygon(x, y) {
+                const verts = this.shapeVertices;
+                let inside = false;
+                for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+                    const xi = verts[i].x, yi = verts[i].y;
+                    const xj = verts[j].x, yj = verts[j].y;
+
+                    const intersect = ((yi > y) !== (yj > y))
+                        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                    if (intersect) inside = !inside;
+                }
+                return inside;
+            }
+
             circleSegmentIntersections(p1, p2, r) {
                 // Return intersections with circle at origin, along segment p1->p2, as {t, x, y}
                 const dx = p2.x - p1.x;
@@ -472,21 +697,15 @@
             }
 
             overlapByBoundary(cx, cy, r) {
-                const s = SQUARE_HALF_SIDE;
-                const squareVerts = [
-                    { x: -s, y: -s },
-                    { x: s, y: -s },
-                    { x: s, y: s },
-                    { x: -s, y: s }
-                ];
+                const shapeVerts = this.shapeVertices;
 
                 const circlePts = [];
                 let area = 0;
 
-                // Line contributions along square edges
-                for (let i = 0; i < 4; i++) {
-                    const v1 = squareVerts[i];
-                    const v2 = squareVerts[(i + 1) % 4];
+                // Line contributions along shape edges
+                for (let i = 0; i < shapeVerts.length; i++) {
+                    const v1 = shapeVerts[i];
+                    const v2 = shapeVerts[(i + 1) % shapeVerts.length];
                     const p1 = { x: v1.x - cx, y: v1.y - cy };
                     const p2 = { x: v2.x - cx, y: v2.y - cy };
 
@@ -509,8 +728,8 @@
                     }
                 }
 
-                // Add square vertices on circle
-                for (const v of squareVerts) {
+                // Add shape vertices on circle
+                for (const v of shapeVerts) {
                     const dx = v.x - cx;
                     const dy = v.y - cy;
                     if (Math.abs(dx * dx + dy * dy - r * r) < 1e-12) {
@@ -518,9 +737,23 @@
                     }
                 }
 
-                // If no intersections and center inside square, circle fully inside
-                if (circlePts.length === 0 && Math.abs(cx) <= s && Math.abs(cy) <= s && r <= s - Math.max(Math.abs(cx), Math.abs(cy))) {
-                    return Math.PI * r * r;
+                // If no intersections and center inside shape, check if circle is fully inside
+                if (circlePts.length === 0 && this.pointInPolygon(cx, cy)) {
+                    // Check if all points on the circle are inside the polygon
+                    // Sample a few points around the circle
+                    let allInside = true;
+                    for (let i = 0; i < 8; i++) {
+                        const angle = i * Math.PI / 4;
+                        const px = cx + r * Math.cos(angle);
+                        const py = cy + r * Math.sin(angle);
+                        if (!this.pointInPolygon(px, py)) {
+                            allInside = false;
+                            break;
+                        }
+                    }
+                    if (allInside) {
+                        return Math.PI * r * r;
+                    }
                 }
 
                 // Unique angles for arcs
@@ -546,7 +779,7 @@
                             x: cx + r * Math.cos(midAngle),
                             y: cy + r * Math.sin(midAngle)
                         };
-                        if (Math.abs(midPoint.x) <= s + 1e-12 && Math.abs(midPoint.y) <= s + 1e-12) {
+                        if (this.pointInPolygon(midPoint.x, midPoint.y)) {
                             area += 0.5 * r * r * delta;
                         }
                     }
@@ -731,22 +964,31 @@
                 ctx.lineTo(600, origin.y);
                 ctx.stroke();
 
-                // Draw case regions if enabled (before square so square is on top)
-                if (document.getElementById('showRegions').checked) {
+                // Draw case regions if enabled (before shape so shape is on top)
+                // Note: Case regions are only applicable to square geometry
+                if (document.getElementById('showRegions').checked && this.shapeType === 'square') {
                     this.drawCaseRegions();
                 }
 
-                // Square
-                const topLeft = this.worldToPixel(-1, 1);
-                const bottomRight = this.worldToPixel(1, -1);
-                const width = bottomRight.x - topLeft.x;
-                const height = bottomRight.y - topLeft.y;
+                // Draw the selected shape
+                if (this.shapeVertices.length > 0) {
+                    ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
+                    ctx.strokeStyle = '#4CAF50';
+                    ctx.lineWidth = 3;
 
-                ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
-                ctx.strokeStyle = '#4CAF50';
-                ctx.lineWidth = 3;
-                ctx.fillRect(topLeft.x, topLeft.y, width, height);
-                ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+                    ctx.beginPath();
+                    const firstPixel = this.worldToPixel(this.shapeVertices[0].x, this.shapeVertices[0].y);
+                    ctx.moveTo(firstPixel.x, firstPixel.y);
+
+                    for (let i = 1; i < this.shapeVertices.length; i++) {
+                        const pixel = this.worldToPixel(this.shapeVertices[i].x, this.shapeVertices[i].y);
+                        ctx.lineTo(pixel.x, pixel.y);
+                    }
+
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                }
 
                 // Circle
                 const circleCenter = this.worldToPixel(this.cx, this.cy);
@@ -918,19 +1160,24 @@
 
             drawOverlapRegion() {
                 const ctx = this.ctx;
-                const squareTopLeft = this.worldToPixel(-1, 1);
-                const squareBottomRight = this.worldToPixel(1, -1);
-                const squareWidth = squareBottomRight.x - squareTopLeft.x;
-                const squareHeight = squareBottomRight.y - squareTopLeft.y;
-
                 const circleCenter = this.worldToPixel(this.cx, this.cy);
                 const circleRadius = this.R * this.scale;
 
                 ctx.save();
-                // Clip to the square, then draw the circle so only the overlap remains.
-                ctx.beginPath();
-                ctx.rect(squareTopLeft.x, squareTopLeft.y, squareWidth, squareHeight);
-                ctx.clip();
+                // Clip to the shape, then draw the circle so only the overlap remains.
+                if (this.shapeVertices.length > 0) {
+                    ctx.beginPath();
+                    const firstPixel = this.worldToPixel(this.shapeVertices[0].x, this.shapeVertices[0].y);
+                    ctx.moveTo(firstPixel.x, firstPixel.y);
+
+                    for (let i = 1; i < this.shapeVertices.length; i++) {
+                        const pixel = this.worldToPixel(this.shapeVertices[i].x, this.shapeVertices[i].y);
+                        ctx.lineTo(pixel.x, pixel.y);
+                    }
+
+                    ctx.closePath();
+                    ctx.clip();
+                }
 
                 ctx.fillStyle = 'rgba(255, 152, 0, 0.4)';
                 ctx.strokeStyle = '#FF9800';
