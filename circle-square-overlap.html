@@ -976,18 +976,18 @@
                     domain.description = 'No overlap';
                 } else if (centerInside) {
                     if (verticesInCircle.length > 0) {
-                        domain.type = `INTERIOR_VERTEX_${verticesInCircle.length}`;
-                        domain.description = `Center inside, ${verticesInCircle.length} vertex(ces) in circle`;
+                        domain.type = `INTERIOR_V${verticesInCircle.length}_E${edgesIntersecting.length}`;
+                        domain.description = `Center inside, ${verticesInCircle.length} vertex(ces), ${edgesIntersecting.length} edge(s)`;
                     } else {
-                        domain.type = 'INTERIOR_EDGE';
+                        domain.type = `INTERIOR_V0_E${edgesIntersecting.length}`;
                         domain.description = `Center inside, ${edgesIntersecting.length} edge(s) intersecting`;
                     }
                 } else {
                     if (verticesInCircle.length > 0) {
-                        domain.type = `EXTERIOR_VERTEX_${verticesInCircle.length}`;
-                        domain.description = `Center outside, ${verticesInCircle.length} vertex(ces) in circle`;
+                        domain.type = `EXTERIOR_V${verticesInCircle.length}_E${edgesIntersecting.length}`;
+                        domain.description = `Center outside, ${verticesInCircle.length} vertex(ces), ${edgesIntersecting.length} edge(s)`;
                     } else if (edgesIntersecting.length > 0) {
-                        domain.type = 'EXTERIOR_EDGE';
+                        domain.type = `EXTERIOR_V0_E${edgesIntersecting.length}`;
                         domain.description = `Center outside, ${edgesIntersecting.length} edge(s) intersecting`;
                     }
                 }
@@ -1285,26 +1285,48 @@
                 const ctx = this.ctx;
                 const R = this.R;
 
-                // Define colors for each domain type
-                const domainColors = {
-                    'INTERIOR_FULL': 'rgba(0, 255, 255, 0.15)',       // cyan
-                    'INTERIOR_EDGE': 'rgba(0, 0, 255, 0.15)',        // blue
+                // Dynamic color generation based on vertex and edge counts
+                const getDomainColor = (type) => {
+                    // Special cases
+                    if (type === 'INTERIOR_FULL') return 'rgba(0, 255, 255, 0.15)';  // cyan
+                    if (type === 'EXTERIOR_NONE') return 'rgba(200, 200, 200, 0.15)'; // gray
+                    if (type === 'UNKNOWN') return 'rgba(255, 0, 255, 0.15)';        // magenta
 
-                    // Interior with different corner counts - yellow/green spectrum
-                    'INTERIOR_VERTEX_1': 'rgba(255, 255, 0, 0.15)',    // yellow
-                    'INTERIOR_VERTEX_2': 'rgba(200, 255, 0, 0.15)',    // yellow-green
-                    'INTERIOR_VERTEX_3': 'rgba(150, 255, 0, 0.15)',    // lime green
-                    'INTERIOR_VERTEX_4': 'rgba(100, 255, 0, 0.15)',    // green
+                    // Parse V and E counts from type string
+                    const match = type.match(/(INTERIOR|EXTERIOR)_V(\d+)_E(\d+)/);
+                    if (!match) return null;
 
-                    // Exterior with different corner counts - orange/red spectrum
-                    'EXTERIOR_VERTEX_1': 'rgba(255, 200, 0, 0.15)',    // light orange
-                    'EXTERIOR_VERTEX_2': 'rgba(255, 150, 0, 0.15)',    // orange
-                    'EXTERIOR_VERTEX_3': 'rgba(255, 100, 0, 0.15)',    // dark orange
-                    'EXTERIOR_VERTEX_4': 'rgba(255, 50, 0, 0.15)',     // red-orange
+                    const [_, position, vCount, eCount] = match;
+                    const v = parseInt(vCount);
+                    const e = parseInt(eCount);
 
-                    'EXTERIOR_EDGE': 'rgba(255, 0, 0, 0.15)',        // red
-                    'EXTERIOR_NONE': 'rgba(200, 200, 200, 0.15)',    // gray
-                    'UNKNOWN': 'rgba(255, 0, 255, 0.15)'             // magenta
+                    // Color scheme:
+                    // - Interior: Blue-Green-Yellow spectrum
+                    // - Exterior: Red-Orange-Yellow spectrum
+                    // - Vertex count affects hue shift
+                    // - Edge count affects saturation/brightness
+
+                    if (position === 'INTERIOR') {
+                        // Base: Blue (0, 0, 255) -> Green (0, 255, 0) -> Yellow (255, 255, 0)
+                        const hueShift = Math.min(v * 60, 180); // 0-180 degrees
+                        const edgeBoost = Math.min(e * 30, 120); // Brightness increase
+
+                        let r = Math.min(255, hueShift + edgeBoost);
+                        let g = Math.min(255, 100 + hueShift + edgeBoost);
+                        let b = Math.max(0, 255 - hueShift - e * 40);
+
+                        return `rgba(${r}, ${g}, ${b}, 0.15)`;
+                    } else {
+                        // Exterior: Red (255, 0, 0) -> Orange (255, 128, 0) -> Yellow (255, 255, 0)
+                        const hueShift = Math.min(v * 50, 200); // Orange shift
+                        const edgeBoost = Math.min(e * 30, 120); // Brightness increase
+
+                        let r = 255;
+                        let g = Math.min(255, hueShift + edgeBoost);
+                        let b = Math.max(0, edgeBoost - 50);
+
+                        return `rgba(${r}, ${g}, ${b}, 0.15)`;
+                    }
                 };
 
                 // Sample the entire visible space uniformly
@@ -1320,8 +1342,9 @@
                         // Classify domain for this position
                         const domain = this.classifyDomain(wx, wy, R);
 
-                        if (domainColors[domain.type]) {
-                            ctx.fillStyle = domainColors[domain.type];
+                        const color = getDomainColor(domain.type);
+                        if (color) {
+                            ctx.fillStyle = color;
                             const cellSize = (2 * maxRange) / samples;
 
                             // Draw this single cell
@@ -1374,36 +1397,44 @@
                 // Helper function to get label name and color for any domain type
                 const getLabelName = (type) => {
                     if (type === 'INTERIOR_FULL') return 'IF';
-                    if (type === 'INTERIOR_EDGE') return 'IE';
-                    if (type === 'EXTERIOR_EDGE') return 'EE';
                     if (type === 'EXTERIOR_NONE') return 'EN';
-                    if (type.startsWith('INTERIOR_VERTEX_')) {
-                        const count = type.split('_')[2];
-                        return `IV${count}`;
-                    }
-                    if (type.startsWith('EXTERIOR_VERTEX_')) {
-                        const count = type.split('_')[2];
-                        return `EV${count}`;
+
+                    // Parse V#_E# format
+                    const match = type.match(/(INTERIOR|EXTERIOR)_V(\d+)_E(\d+)/);
+                    if (match) {
+                        const [_, position, vCount, eCount] = match;
+                        const prefix = position === 'INTERIOR' ? 'I' : 'E';
+                        return `${prefix}V${vCount}E${eCount}`;
                     }
                     return type;
                 };
 
                 const getLabelColor = (type) => {
                     if (type === 'INTERIOR_FULL') return '#00AAAA';
-                    if (type === 'INTERIOR_EDGE') return '#0000AA';
-                    if (type === 'EXTERIOR_EDGE') return '#AA0000';
                     if (type === 'EXTERIOR_NONE') return '#888888';
-                    if (type.startsWith('INTERIOR_VERTEX_')) {
-                        const count = parseInt(type.split('_')[2]);
-                        // Yellow to green gradient
-                        const r = Math.max(100, 255 - count * 40);
-                        return `rgb(${r}, 255, 0)`;
-                    }
-                    if (type.startsWith('EXTERIOR_VERTEX_')) {
-                        const count = parseInt(type.split('_')[2]);
-                        // Orange to red gradient
-                        const g = Math.max(50, 200 - count * 40);
-                        return `rgb(255, ${g}, 0)`;
+
+                    // Parse V#_E# format and generate color matching the region color
+                    const match = type.match(/(INTERIOR|EXTERIOR)_V(\d+)_E(\d+)/);
+                    if (match) {
+                        const [_, position, vCount, eCount] = match;
+                        const v = parseInt(vCount);
+                        const e = parseInt(eCount);
+
+                        if (position === 'INTERIOR') {
+                            const hueShift = Math.min(v * 60, 180);
+                            const edgeBoost = Math.min(e * 30, 120);
+                            let r = Math.min(255, hueShift + edgeBoost);
+                            let g = Math.min(255, 100 + hueShift + edgeBoost);
+                            let b = Math.max(0, 255 - hueShift - e * 40);
+                            return `rgb(${r}, ${g}, ${b})`;
+                        } else {
+                            const hueShift = Math.min(v * 50, 200);
+                            const edgeBoost = Math.min(e * 30, 120);
+                            let r = 255;
+                            let g = Math.min(255, hueShift + edgeBoost);
+                            let b = Math.max(0, edgeBoost - 50);
+                            return `rgb(${r}, ${g}, ${b})`;
+                        }
                     }
                     return '#888888';
                 };
@@ -1615,8 +1646,6 @@
                 const getDomainName = (caseType) => {
                     const baseNames = {
                         'INTERIOR_FULL': '⬤ Interior: Circle fully inside shape',
-                        'INTERIOR_EDGE': `⬤ Interior: Edge region (${this.currentDomain?.edgesIntersecting?.length || 0} edges intersecting)`,
-                        'EXTERIOR_EDGE': `◯ Exterior: Edge region (${this.currentDomain?.edgesIntersecting?.length || 0} edges intersecting)`,
                         'EXTERIOR_NONE': '◯ Exterior: No overlap',
                         // Legacy square cases
                         'A': 'Case A: πR² (Circle fully inside)',
@@ -1629,13 +1658,13 @@
 
                     if (baseNames[caseType]) return baseNames[caseType];
 
-                    if (caseType.startsWith('INTERIOR_VERTEX_')) {
-                        const count = caseType.split('_')[2];
-                        return `⬤ Interior: Vertex region (${count} vertex(ces) in circle)`;
-                    }
-                    if (caseType.startsWith('EXTERIOR_VERTEX_')) {
-                        const count = caseType.split('_')[2];
-                        return `◯ Exterior: Vertex region (${count} vertex(ces) in circle)`;
+                    // Parse V#_E# format
+                    const match = caseType.match(/(INTERIOR|EXTERIOR)_V(\d+)_E(\d+)/);
+                    if (match) {
+                        const [_, position, vCount, eCount] = match;
+                        const symbol = position === 'INTERIOR' ? '⬤' : '◯';
+                        const posName = position === 'INTERIOR' ? 'Interior' : 'Exterior';
+                        return `${symbol} ${posName}: ${vCount} vertex(ces), ${eCount} edge(s)`;
                     }
 
                     return `Domain: ${caseType}`;
