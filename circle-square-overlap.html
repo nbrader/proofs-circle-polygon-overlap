@@ -863,11 +863,12 @@
                     }
                 }
 
-                // Add shape vertices on circle
+                // Add shape vertices inside or on circle
                 for (const v of shapeVerts) {
                     const dx = v.x - cx;
                     const dy = v.y - cy;
-                    if (Math.abs(dx * dx + dy * dy - r * r) < 1e-12) {
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq <= r * r + 1e-12) {
                         circlePts.push({ x: v.x, y: v.y });
                     }
                 }
@@ -920,7 +921,9 @@
                     }
                 }
 
-                return Math.abs(area);
+                // Return signed area (should be positive if boundary walk is correct)
+                // Per IDEA.txt: "use signed area in order to deduct negatives correctly"
+                return area;
             }
 
             // Classify the domain for arbitrary shapes
