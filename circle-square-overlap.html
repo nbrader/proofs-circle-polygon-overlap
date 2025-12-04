@@ -188,7 +188,7 @@
                 <input type="checkbox" id="showGrid" checked>
             </div>
             <div class="control-group">
-                <label for="showRegions">Show Case Regions:</label>
+                <label for="showRegions">Show Domain Regions:</label>
                 <input type="checkbox" id="showRegions" checked>
             </div>
             <div class="control-group">
@@ -197,7 +197,7 @@
             </div>
         </div>
 
-        <div class="case-indicator" id="caseIndicator">Case: -</div>
+        <div class="case-indicator" id="caseIndicator">Domain: -</div>
 
         <div class="info">
             <div class="info-grid">
@@ -788,74 +788,154 @@
                 return Math.abs(area);
             }
 
+            // Classify the domain for arbitrary shapes
+            classifyDomain(cx, cy, R) {
+                const centerInside = this.pointInPolygon(cx, cy);
+
+                // Find vertices inside circle
+                const verticesInCircle = [];
+                for (let i = 0; i < this.shapeVertices.length; i++) {
+                    const v = this.shapeVertices[i];
+                    const dist = Math.sqrt((v.x - cx) * (v.x - cx) + (v.y - cy) * (v.y - cy));
+                    if (dist <= R) {
+                        verticesInCircle.push(i);
+                    }
+                }
+
+                // Find edges that intersect circle
+                const edgesIntersecting = [];
+                for (let i = 0; i < this.shapeVertices.length; i++) {
+                    const v1 = this.shapeVertices[i];
+                    const v2 = this.shapeVertices[(i + 1) % this.shapeVertices.length];
+                    const p1 = { x: v1.x - cx, y: v1.y - cy };
+                    const p2 = { x: v2.x - cx, y: v2.y - cy };
+                    const intersections = this.circleSegmentIntersections(p1, p2, R);
+                    if (intersections.length > 0) {
+                        edgesIntersecting.push(i);
+                    }
+                }
+
+                // Check if circle is fully inside
+                const circleFullyInside = centerInside && edgesIntersecting.length === 0 && verticesInCircle.length === 0;
+
+                // Check if no overlap
+                const noOverlap = !centerInside && edgesIntersecting.length === 0 && verticesInCircle.length === 0;
+
+                // Classify domain
+                let domain = {
+                    type: 'UNKNOWN',
+                    centerInside: centerInside,
+                    verticesInCircle: verticesInCircle,
+                    edgesIntersecting: edgesIntersecting,
+                    description: ''
+                };
+
+                if (circleFullyInside) {
+                    domain.type = 'INTERIOR_FULL';
+                    domain.description = 'Circle fully inside shape';
+                } else if (noOverlap) {
+                    domain.type = 'EXTERIOR_NONE';
+                    domain.description = 'No overlap';
+                } else if (centerInside) {
+                    if (verticesInCircle.length > 0) {
+                        domain.type = 'INTERIOR_VERTEX';
+                        domain.description = `Center inside, ${verticesInCircle.length} vertex(ces) in circle`;
+                    } else {
+                        domain.type = 'INTERIOR_EDGE';
+                        domain.description = `Center inside, ${edgesIntersecting.length} edge(s) intersecting`;
+                    }
+                } else {
+                    if (verticesInCircle.length > 0) {
+                        domain.type = 'EXTERIOR_VERTEX';
+                        domain.description = `Center outside, ${verticesInCircle.length} vertex(ces) in circle`;
+                    } else if (edgesIntersecting.length > 0) {
+                        domain.type = 'EXTERIOR_EDGE';
+                        domain.description = `Center outside, ${edgesIntersecting.length} edge(s) intersecting`;
+                    }
+                }
+
+                return domain;
+            }
+
             // calculateOverlap returns the overlap kernel A(cx, cy):
-            // the area of intersection between the square and a circle centered at (cx, cy).
+            // the area of intersection between the shape and a circle centered at (cx, cy).
             // Both the 2D view (dragging) and 3D surface plot just sample this kernel.
             calculateOverlap(cx, cy, R) {
                 this.debugText = `cx=${cx.toFixed(3)}, cy=${cy.toFixed(3)}, R=${R.toFixed(3)}\n`;
 
-                // Work with absolute values (symmetry) for case labeling only
-                const ax = Math.abs(cx);
-                const ay = Math.abs(cy);
+                // Classify domain for all shapes
+                const domain = this.classifyDomain(cx, cy, R);
+                this.currentCase = domain.type;
+                this.currentDomain = domain;
+                this.debugText += `Domain: ${domain.type}\n`;
+                this.debugText += `Description: ${domain.description}\n`;
+                this.debugText += `Center inside: ${domain.centerInside}\n`;
+                this.debugText += `Vertices in circle: [${domain.verticesInCircle.join(', ')}]\n`;
+                this.debugText += `Edges intersecting: [${domain.edgesIntersecting.join(', ')}]\n`;
 
-                const s = SQUARE_HALF_SIDE;
-                const dx = Math.max(0, ax - s);
-                const dy = Math.max(0, ay - s);
-                const distToNearestCorner = Math.sqrt((ax - s) * (ax - s) + (ay - s) * (ay - s));
-                const cornerInCircle = distToNearestCorner <= R;
-                const sagitta_x = Math.max(0, ax + R - s);
-                const sagitta_y = Math.max(0, ay + R - s);
+                // For square shapes, also compute legacy case classification
+                if (this.shapeType === 'square') {
+                    const ax = Math.abs(cx);
+                    const ay = Math.abs(cy);
+                    const s = this.squareSize;
+                    const dx = Math.max(0, ax - s);
+                    const dy = Math.max(0, ay - s);
+                    const distToNearestCorner = Math.sqrt((ax - s) * (ax - s) + (ay - s) * (ay - s));
+                    const cornerInCircle = distToNearestCorner <= R;
+                    const sagitta_x = Math.max(0, ax + R - s);
+                    const sagitta_y = Math.max(0, ay + R - s);
 
-                this.debugText += `|cx|=${ax.toFixed(3)}, |cy|=${ay.toFixed(3)}\n`;
-                this.debugText += `dx=${dx.toFixed(3)}, dy=${dy.toFixed(3)}\n`;
-                this.debugText += `distToCorner=${distToNearestCorner.toFixed(3)}, cornerInCircle=${cornerInCircle}\n`;
-                this.debugText += `sagitta_x=${sagitta_x.toFixed(3)}, sagitta_y=${sagitta_y.toFixed(3)}\n`;
+                    this.debugText += `\nSquare-specific:\n`;
+                    this.debugText += `|cx|=${ax.toFixed(3)}, |cy|=${ay.toFixed(3)}\n`;
+                    this.debugText += `dx=${dx.toFixed(3)}, dy=${dy.toFixed(3)}\n`;
+                    this.debugText += `distToCorner=${distToNearestCorner.toFixed(3)}, cornerInCircle=${cornerInCircle}\n`;
+                    this.debugText += `sagitta_x=${sagitta_x.toFixed(3)}, sagitta_y=${sagitta_y.toFixed(3)}\n`;
 
-                // Case labeling (does not drive area anymore)
-                let caseType = 'H';
-                if (ax + R <= s && ay + R <= s) {
-                    caseType = 'A';
-                    this.debugText += 'Case A: Fully inside\n';
-                } else if (dx > 0 && dy > 0 && distToNearestCorner > R) {
-                    caseType = 'H';
-                    this.debugText += 'Case H: No overlap\n';
-                } else {
-                    const inCornerRegion = sagitta_x > 0 && sagitta_y > 0;
-                    if (inCornerRegion) {
-                        if (ax < s && ay < s) {
-                            caseType = cornerInCircle ? 'D' : 'C';
-                            this.debugText += caseType === 'D'
-                                ? 'Case D: Corner inside circle (center inside square)\n'
-                                : 'Case C: Center inside, corner outside circle\n';
-                        } else if (ax >= s && ay >= s) {
-                            if (cornerInCircle) {
-                                caseType = 'D';
-                                this.debugText += 'Case D: Corner inside circle (center outside both)\n';
+                    let caseType = 'H';
+                    if (ax + R <= s && ay + R <= s) {
+                        caseType = 'A';
+                        this.debugText += 'Legacy Case A: Fully inside\n';
+                    } else if (dx > 0 && dy > 0 && distToNearestCorner > R) {
+                        caseType = 'H';
+                        this.debugText += 'Legacy Case H: No overlap\n';
+                    } else {
+                        const inCornerRegion = sagitta_x > 0 && sagitta_y > 0;
+                        if (inCornerRegion) {
+                            if (ax < s && ay < s) {
+                                caseType = cornerInCircle ? 'D' : 'C';
+                                this.debugText += caseType === 'D'
+                                    ? 'Legacy Case D: Corner inside circle (center inside square)\n'
+                                    : 'Legacy Case C: Center inside, corner outside circle\n';
+                            } else if (ax >= s && ay >= s) {
+                                if (cornerInCircle) {
+                                    caseType = 'D';
+                                    this.debugText += 'Legacy Case D: Corner inside circle (center outside both)\n';
+                                }
+                            } else {
+                                if (cornerInCircle) {
+                                    caseType = 'D';
+                                    this.debugText += 'Legacy Case D: Corner inside circle (mixed position)\n';
+                                }
                             }
-                        } else {
-                            if (cornerInCircle) {
-                                caseType = 'D';
-                                this.debugText += 'Case D: Corner inside circle (mixed position)\n';
+                        }
+
+                        if (caseType === 'H' && ax < s && ay < s && (sagitta_x > 0 || sagitta_y > 0)) {
+                            caseType = 'B';
+                            this.debugText += 'Legacy Case B: Center inside, extends beyond edge(s)\n';
+                        }
+
+                        if (caseType === 'H' && (ax >= s || ay >= s)) {
+                            const dxToEdge = ax >= s ? (ax - s) : 0;
+                            const dyToEdge = ay >= s ? (ay - s) : 0;
+                            if ((ax >= s && dxToEdge <= R) || (ay >= s && dyToEdge <= R)) {
+                                caseType = 'E';
+                                this.debugText += 'Legacy Case E: Edge segment (center outside)\n';
                             }
                         }
                     }
-
-                    if (caseType === 'H' && ax < s && ay < s && (sagitta_x > 0 || sagitta_y > 0)) {
-                        caseType = 'B';
-                        this.debugText += 'Case B: Center inside, extends beyond edge(s)\n';
-                    }
-
-                    if (caseType === 'H' && (ax >= s || ay >= s)) {
-                        const dxToEdge = ax >= s ? (ax - s) : 0;
-                        const dyToEdge = ay >= s ? (ay - s) : 0;
-                        if ((ax >= s && dxToEdge <= R) || (ay >= s && dyToEdge <= R)) {
-                            caseType = 'E';
-                            this.debugText += 'Case E: Edge segment (center outside)\n';
-                        }
-                    }
+                    this.debugText += `Legacy case: ${caseType}\n`;
                 }
 
-                this.currentCase = caseType;
                 return this.overlapByBoundary(cx, cy, R);
             }
 
@@ -964,10 +1044,15 @@
                 ctx.lineTo(600, origin.y);
                 ctx.stroke();
 
-                // Draw case regions if enabled (before shape so shape is on top)
-                // Note: Case regions are only applicable to square geometry
-                if (document.getElementById('showRegions').checked && this.shapeType === 'square') {
-                    this.drawCaseRegions();
+                // Draw domain/case regions if enabled (before shape so shape is on top)
+                if (document.getElementById('showRegions').checked) {
+                    if (this.shapeType === 'square') {
+                        // For squares, show legacy case regions
+                        this.drawCaseRegions();
+                    } else {
+                        // For other shapes, show domain regions
+                        this.drawDomainRegions();
+                    }
                 }
 
                 // Draw the selected shape
@@ -1012,10 +1097,126 @@
                 ctx.fillText(`Center: (${this.cx.toFixed(2)}, ${this.cy.toFixed(2)})`, 10, 45);
             }
 
+            drawDomainRegions() {
+                const ctx = this.ctx;
+                const R = this.R;
+
+                // Define colors for each domain type
+                const domainColors = {
+                    'INTERIOR_FULL': 'rgba(0, 255, 255, 0.15)',       // cyan
+                    'INTERIOR_VERTEX': 'rgba(255, 255, 0, 0.15)',    // yellow
+                    'INTERIOR_EDGE': 'rgba(0, 0, 255, 0.15)',        // blue
+                    'EXTERIOR_VERTEX': 'rgba(255, 128, 0, 0.15)',    // orange
+                    'EXTERIOR_EDGE': 'rgba(255, 0, 0, 0.15)',        // red
+                    'EXTERIOR_NONE': 'rgba(200, 200, 200, 0.15)',    // gray
+                    'UNKNOWN': 'rgba(255, 0, 255, 0.15)'             // magenta
+                };
+
+                // Sample the entire visible space uniformly
+                const samples = 120;
+                const maxRange = 3;  // Show up to distance 3 from origin in each direction
+
+                for (let i = 0; i < samples; i++) {
+                    for (let j = 0; j < samples; j++) {
+                        // Map to world coordinates from -maxRange to +maxRange
+                        const wx = -maxRange + (i / samples) * (2 * maxRange);
+                        const wy = -maxRange + (j / samples) * (2 * maxRange);
+
+                        // Classify domain for this position
+                        const domain = this.classifyDomain(wx, wy, R);
+
+                        if (domainColors[domain.type]) {
+                            ctx.fillStyle = domainColors[domain.type];
+                            const cellSize = (2 * maxRange) / samples;
+
+                            // Draw this single cell
+                            const p1 = this.worldToPixel(wx, wy);
+                            const p2 = this.worldToPixel(wx + cellSize, wy + cellSize);
+                            const w = Math.abs(p2.x - p1.x);
+                            const h = Math.abs(p2.y - p1.y);
+                            ctx.fillRect(p1.x, p1.y, w, h);
+                        }
+                    }
+                }
+
+                // Draw circles at vertices to show vertex influence zones
+                ctx.strokeStyle = 'rgba(100, 100, 100, 0.4)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                for (const v of this.shapeVertices) {
+                    const center = this.worldToPixel(v.x, v.y);
+                    const radius = R * this.scale;
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, radius, 0, 2 * Math.PI);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+
+                // Draw labels for domain types
+                ctx.font = 'bold 14px monospace';
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 3;
+
+                // Find representative positions for each domain type
+                const labelPositions = {
+                    'INTERIOR_FULL': [0, 0],
+                    'INTERIOR_VERTEX': null,
+                    'INTERIOR_EDGE': null,
+                    'EXTERIOR_VERTEX': null,
+                    'EXTERIOR_EDGE': null,
+                    'EXTERIOR_NONE': null
+                };
+
+                // Sample to find good label positions
+                const labelSamples = 20;
+                for (let i = 0; i < labelSamples; i++) {
+                    for (let j = 0; j < labelSamples; j++) {
+                        const wx = -maxRange + (i / labelSamples) * (2 * maxRange);
+                        const wy = -maxRange + (j / labelSamples) * (2 * maxRange);
+                        const domain = this.classifyDomain(wx, wy, R);
+
+                        if (!labelPositions[domain.type] && domain.type !== 'INTERIOR_FULL') {
+                            labelPositions[domain.type] = [wx, wy];
+                        }
+                    }
+                }
+
+                // Draw labels
+                const labelNames = {
+                    'INTERIOR_FULL': 'IF',
+                    'INTERIOR_VERTEX': 'IV',
+                    'INTERIOR_EDGE': 'IE',
+                    'EXTERIOR_VERTEX': 'EV',
+                    'EXTERIOR_EDGE': 'EE',
+                    'EXTERIOR_NONE': 'EN'
+                };
+
+                const labelColors = {
+                    'INTERIOR_FULL': '#00AAAA',
+                    'INTERIOR_VERTEX': '#AAAA00',
+                    'INTERIOR_EDGE': '#0000AA',
+                    'EXTERIOR_VERTEX': '#AA6600',
+                    'EXTERIOR_EDGE': '#AA0000',
+                    'EXTERIOR_NONE': '#888888'
+                };
+
+                for (const [type, pos] of Object.entries(labelPositions)) {
+                    if (pos) {
+                        const pixel = this.worldToPixel(pos[0], pos[1]);
+                        const text = labelNames[type];
+
+                        // Draw text with white outline
+                        ctx.strokeText(text, pixel.x - 10, pixel.y + 6);
+                        ctx.fillStyle = labelColors[type];
+                        ctx.fillText(text, pixel.x - 10, pixel.y + 6);
+                    }
+                }
+            }
+
             drawCaseRegions() {
                 const ctx = this.ctx;
                 const R = this.R;
-                const s = 1;  // square half-side
+                const s = this.squareSize;
 
                 // Define colors for each case
                 const caseColors = {
@@ -1202,7 +1403,14 @@
                 const percent = (overlap / circleArea * 100).toFixed(1);
                 document.getElementById('overlapPercent').textContent = `${percent}%`;
 
-                const caseNames = {
+                const domainNames = {
+                    'INTERIOR_FULL': '⬤ Interior: Circle fully inside shape',
+                    'INTERIOR_VERTEX': `⬤ Interior: Vertex region (${this.currentDomain?.verticesInCircle?.length || 0} vertices in circle)`,
+                    'INTERIOR_EDGE': `⬤ Interior: Edge region (${this.currentDomain?.edgesIntersecting?.length || 0} edges intersecting)`,
+                    'EXTERIOR_VERTEX': `◯ Exterior: Vertex region (${this.currentDomain?.verticesInCircle?.length || 0} vertices in circle)`,
+                    'EXTERIOR_EDGE': `◯ Exterior: Edge region (${this.currentDomain?.edgesIntersecting?.length || 0} edges intersecting)`,
+                    'EXTERIOR_NONE': '◯ Exterior: No overlap',
+                    // Legacy square cases
                     'A': 'Case A: πR² (Circle fully inside)',
                     'B': 'Case B: πR² - segment (Extends beyond one edge)',
                     'C': 'Case C: πR² - 2 segments (Extends beyond two edges)',
@@ -1211,7 +1419,7 @@
                     'H': 'Case H: 0 (No overlap)'
                 };
                 document.getElementById('caseIndicator').textContent =
-                    caseNames[this.currentCase] || 'Case: Unknown';
+                    domainNames[this.currentCase] || `Domain: ${this.currentCase}`;
 
                 document.getElementById('debugInfo').textContent = this.debugText;
             }
