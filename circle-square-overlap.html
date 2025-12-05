@@ -292,9 +292,9 @@
 
                 // Animation state
                 this.isAnimating = false;
+                this.animationComponents = [];
                 this.animationStep = 0;
-                this.animationData = null;
-                this.animationFrameId = null;
+                this.animationTimerId = null;
                 this.wasAnimatingBeforeDrag = false;
 
                 // Shape properties
@@ -604,10 +604,11 @@
                     const dy = world.y - this.cy;
                     if (dx * dx + dy * dy <= this.R * this.R) {
                         this.isDragging = true;
-                        // Pause animation while dragging
+
+                        // Stop animation during drag
                         if (this.isAnimating) {
                             this.wasAnimatingBeforeDrag = true;
-                            this.pauseAnimation();
+                            this.stopAnimation();
                         }
                     }
                 });
@@ -635,10 +636,10 @@
                 this.canvas2d.addEventListener('mouseup', () => {
                     if (this.isDragging) {
                         this.isDragging = false;
-                        // Resume animation if it was running before drag
+                        // Restart animation if it was running before drag
                         if (this.wasAnimatingBeforeDrag) {
                             this.wasAnimatingBeforeDrag = false;
-                            this.resumeAnimation();
+                            this.startAnimation();
                         }
                     }
                 });
@@ -646,10 +647,10 @@
                 this.canvas2d.addEventListener('mouseleave', () => {
                     if (this.isDragging) {
                         this.isDragging = false;
-                        // Resume animation if it was running before drag
+                        // Restart animation if it was running before drag
                         if (this.wasAnimatingBeforeDrag) {
                             this.wasAnimatingBeforeDrag = false;
-                            this.resumeAnimation();
+                            this.startAnimation();
                         }
                     }
                 });
@@ -892,7 +893,12 @@
                     const intersections = this.circleSegmentIntersections(p1, p2, r);
                     if (intersections.length > 0) {
                         intersections.forEach((hit) => {
-                            circlePts.push({ x: hit.x + cx, y: hit.y + cy });
+                            circlePts.push({
+                                x: hit.x + cx,
+                                y: hit.y + cy,
+                                edgeIndex: i,
+                                edgeParam: hit.t  // Position along edge (0 to 1)
+                            });
                         });
                     }
 
@@ -911,7 +917,9 @@
                                     p2: { x: a.x + cx, y: a.y + cy },
                                     p3: { x: b.x + cx, y: b.y + cy },
                                     area: triangleArea,
-                                    edgeIndex: i
+                                    edgeIndex: i,
+                                    edgeParam: a.t,      // Start position
+                                    edgeParamEnd: b.t    // End position
                                 });
                             }
                         }
@@ -919,12 +927,18 @@
                 }
 
                 // Add shape vertices inside or on circle
-                for (const v of shapeVerts) {
+                for (let i = 0; i < shapeVerts.length; i++) {
+                    const v = shapeVerts[i];
                     const dx = v.x - cx;
                     const dy = v.y - cy;
                     const distSq = dx * dx + dy * dy;
                     if (distSq <= r * r + 1e-12) {
-                        circlePts.push({ x: v.x, y: v.y });
+                        circlePts.push({
+                            x: v.x,
+                            y: v.y,
+                            edgeIndex: i,
+                            edgeParam: 0  // Vertex i is at the start of edge i (t=0)
+                        });
                     }
                 }
 
@@ -952,23 +966,31 @@
                     }
                 }
 
-                // Unique angles for arcs
-                const angles = [];
+                // Unique angles for arcs (with edge tracking and polygon position)
+                const angleData = [];
                 const seen = new Set();
-                for (const p of circlePts) {
+                for (let idx = 0; idx < circlePts.length; idx++) {
+                    const p = circlePts[idx];
                     const ang = Math.atan2(p.y - cy, p.x - cx);
                     const key = Math.round(ang * 1e9);
                     if (!seen.has(key)) {
                         seen.add(key);
-                        angles.push(ang);
+                        angleData.push({
+                            angle: ang,
+                            edgeIndex: p.edgeIndex,
+                            edgeParam: p.edgeParam,  // Position along polygon edge
+                            originalOrder: idx
+                        });
                     }
                 }
-                angles.sort((a, b) => a - b);
+                angleData.sort((a, b) => a.angle - b.angle);
 
-                if (angles.length >= 2) {
-                    for (let i = 0; i < angles.length; i++) {
-                        const a1 = angles[i];
-                        const a2 = angles[(i + 1) % angles.length];
+                if (angleData.length >= 2) {
+                    for (let i = 0; i < angleData.length; i++) {
+                        const data1 = angleData[i];
+                        const data2 = angleData[(i + 1) % angleData.length];
+                        const a1 = data1.angle;
+                        const a2 = data2.angle;
                         const delta = ((a2 - a1 + 2 * Math.PI) % (2 * Math.PI));
                         const midAngle = a1 + delta / 2;
                         const midPoint = {
@@ -979,11 +1001,17 @@
                             const sectorArea = 0.5 * r * r * delta;
                             area += sectorArea;
                             if (collectData) {
+                                // Sector bridges from data1 to data2 on polygon
                                 sectors.push({
                                     cx, cy, r,
                                     startAngle: a1,
                                     endAngle: a2,
-                                    area: sectorArea
+                                    area: sectorArea,
+                                    fromEdge: data1.edgeIndex,
+                                    fromParam: data1.edgeParam,  // Start position on polygon
+                                    toEdge: data2.edgeIndex,
+                                    toParam: data2.edgeParam,    // End position on polygon
+                                    fromOrder: data1.originalOrder
                                 });
                             }
                         }
@@ -1308,7 +1336,7 @@
                 // Draw overlap region
                 this.drawOverlapRegion();
 
-                // Draw animated components (triangles and sectors) if animation is active
+                // Draw animated components if active
                 this.drawAnimatedComponents();
 
                 // Draw polygon being drawn
@@ -1750,10 +1778,192 @@
                 document.getElementById('debugInfo').textContent = this.debugText;
             }
 
+            // ===== ANIMATION METHODS =====
+
+            /**
+             * Step 1: Prepare boundary elements from overlap calculation
+             * Returns elements with normalized point representations
+             */
+            prepareBoundaryElements(triangles, sectors) {
+                const elements = [];
+
+                // Helper: Create a unique key for a point on the polygon boundary
+                const pointKey = (edgeIdx, param) => `${edgeIdx}:${param.toFixed(8)}`;
+
+                // Add triangles
+                for (const tri of triangles) {
+                    elements.push({
+                        type: 'triangle',
+                        data: tri,
+                        startPoint: pointKey(tri.edgeIndex, tri.edgeParam),
+                        endPoint: pointKey(tri.edgeIndex, tri.edgeParamEnd)
+                    });
+                }
+
+                // Add sectors
+                for (const sec of sectors) {
+                    elements.push({
+                        type: 'sector',
+                        data: sec,
+                        startPoint: pointKey(sec.fromEdge, sec.fromParam),
+                        endPoint: pointKey(sec.toEdge, sec.toParam)
+                    });
+                }
+
+                return elements;
+            }
+
+            /**
+             * Step 2: Find connected components in the boundary graph
+             * Returns array of component groups
+             */
+            findConnectedComponents(elements) {
+                if (elements.length === 0) return [];
+
+                // Build adjacency map: point -> elements that touch it
+                const pointToElements = new Map();
+
+                elements.forEach((elem, idx) => {
+                    if (!pointToElements.has(elem.startPoint)) {
+                        pointToElements.set(elem.startPoint, []);
+                    }
+                    pointToElements.get(elem.startPoint).push(idx);
+
+                    if (!pointToElements.has(elem.endPoint)) {
+                        pointToElements.set(elem.endPoint, []);
+                    }
+                    pointToElements.get(elem.endPoint).push(idx);
+                });
+
+                // Find connected components using BFS
+                const visited = new Set();
+                const components = [];
+
+                for (let startIdx = 0; startIdx < elements.length; startIdx++) {
+                    if (visited.has(startIdx)) continue;
+
+                    // Start new component
+                    const component = [];
+                    const queue = [startIdx];
+
+                    while (queue.length > 0) {
+                        const idx = queue.shift();
+                        if (visited.has(idx)) continue;
+
+                        visited.add(idx);
+                        component.push(idx);
+
+                        // Find neighbors (elements sharing endpoints)
+                        const elem = elements[idx];
+                        const neighbors = [
+                            ...(pointToElements.get(elem.startPoint) || []),
+                            ...(pointToElements.get(elem.endPoint) || [])
+                        ];
+
+                        for (const neighborIdx of neighbors) {
+                            if (!visited.has(neighborIdx)) {
+                                queue.push(neighborIdx);
+                            }
+                        }
+                    }
+
+                    if (component.length > 0) {
+                        components.push(component);
+                    }
+                }
+
+                return components;
+            }
+
+            /**
+             * Step 3: Order elements within a component to trace around the boundary
+             * Returns ordered list of element indices
+             */
+            orderComponentBoundary(componentIndices, elements) {
+                if (componentIndices.length === 0) return [];
+                if (componentIndices.length === 1) return componentIndices;
+
+                // Build a map: startPoint -> element index
+                const startPointMap = new Map();
+                const endPointMap = new Map();
+
+                for (const idx of componentIndices) {
+                    const elem = elements[idx];
+                    startPointMap.set(elem.startPoint, idx);
+                    endPointMap.set(elem.endPoint, idx);
+                }
+
+                // Trace the boundary starting from the first element
+                const ordered = [];
+                const used = new Set();
+                let currentIdx = componentIndices[0];
+
+                while (ordered.length < componentIndices.length) {
+                    if (used.has(currentIdx)) break;
+
+                    ordered.push(currentIdx);
+                    used.add(currentIdx);
+
+                    // Find next element: one that starts where current ends
+                    const currentEnd = elements[currentIdx].endPoint;
+                    const nextIdx = startPointMap.get(currentEnd);
+
+                    if (nextIdx !== undefined && !used.has(nextIdx)) {
+                        currentIdx = nextIdx;
+                    } else {
+                        // Can't continue, try to find any unused element
+                        const remaining = componentIndices.find(idx => !used.has(idx));
+                        if (remaining !== undefined) {
+                            currentIdx = remaining;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                return ordered;
+            }
+
+            /**
+             * Main animation starter
+             */
             startAnimation() {
-                // Collect animation data
+                // Get overlap data
                 const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
-                this.animationData = result;
+
+                if (!result.triangles && !result.sectors) {
+                    alert('No overlap to animate');
+                    return;
+                }
+
+                // Step 1: Prepare boundary elements
+                const elements = this.prepareBoundaryElements(
+                    result.triangles || [],
+                    result.sectors || []
+                );
+
+                if (elements.length === 0) {
+                    alert('No overlap elements found');
+                    return;
+                }
+
+                // Step 2: Find connected components
+                const componentGroups = this.findConnectedComponents(elements);
+
+                // Step 3: Order each component and flatten into animation sequence
+                const animationSequence = [];
+
+                for (const componentIndices of componentGroups) {
+                    const orderedIndices = this.orderComponentBoundary(componentIndices, elements);
+
+                    // Add elements from this component to the sequence
+                    for (const idx of orderedIndices) {
+                        animationSequence.push(elements[idx]);
+                    }
+                }
+
+                // Store animation data
+                this.animationComponents = animationSequence;
                 this.animationStep = 0;
                 this.isAnimating = true;
 
@@ -1762,162 +1972,164 @@
                 document.getElementById('animationStatus').style.display = 'inline';
 
                 // Start animation loop
-                this.animateNextStep();
+                this.animateNextFrame();
             }
 
+            /**
+             * Stop animation
+             */
             stopAnimation() {
                 this.isAnimating = false;
                 this.animationStep = 0;
-                this.animationData = null;
+                this.animationComponents = [];
 
-                if (this.animationFrameId) {
-                    clearTimeout(this.animationFrameId);
-                    this.animationFrameId = null;
+                if (this.animationTimerId) {
+                    clearTimeout(this.animationTimerId);
+                    this.animationTimerId = null;
                 }
 
                 // Update UI
                 document.getElementById('animateBtn').textContent = '▶️ Animate Overlap Calculation';
                 document.getElementById('animationStatus').style.display = 'none';
 
-                // Redraw without animation
+                // Redraw
                 this.updateDisplay();
             }
 
-            pauseAnimation() {
-                // Stop the animation timer but keep the state
-                if (this.animationFrameId) {
-                    clearTimeout(this.animationFrameId);
-                    this.animationFrameId = null;
-                }
-                this.isAnimating = false;
-            }
+            /**
+             * Animation frame update
+             */
+            animateNextFrame() {
+                if (!this.isAnimating) return;
 
-            resumeAnimation() {
-                // Recollect animation data for new position and restart from step 0
-                const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
-                this.animationData = result;
-                this.animationStep = 0;
-                this.isAnimating = true;
-
-                // Restart animation loop
-                this.animateNextStep();
-            }
-
-            animateNextStep() {
-                if (!this.isAnimating || !this.animationData) return;
-
-                const totalSteps = this.animationData.triangles.length + this.animationData.sectors.length;
-
-                // Redraw with current animation step
                 this.updateDisplay();
-
                 this.animationStep++;
 
-                if (this.animationStep > totalSteps) {
-                    // Animation complete, restart
-                    this.animationStep = 0;
+                if (this.animationStep > this.animationComponents.length) {
+                    this.animationStep = 0; // Loop
                 }
 
-                // Schedule next step
-                this.animationFrameId = setTimeout(() => this.animateNextStep(), 800);
+                this.animationTimerId = setTimeout(() => this.animateNextFrame(), 800);
             }
 
+            /**
+             * Draw animated components on the canvas
+             */
             drawAnimatedComponents() {
-                if (!this.isAnimating || !this.animationData) return;
+                if (!this.isAnimating || this.animationComponents.length === 0) return;
 
                 const ctx = this.ctx;
-                const { triangles, sectors } = this.animationData;
+                let triangleCount = 0;
+                let sectorCount = 0;
 
-                // Determine what to draw based on current step
-                const triangleCount = Math.min(this.animationStep, triangles.length);
-                const sectorCount = Math.max(0, this.animationStep - triangles.length);
+                // Draw all components up to current step
+                for (let i = 0; i < this.animationStep && i < this.animationComponents.length; i++) {
+                    const component = this.animationComponents[i];
+                    const isCurrent = (i === this.animationStep - 1);
 
-                // Draw triangles up to current step
-                for (let i = 0; i < triangleCount; i++) {
-                    const tri = triangles[i];
-                    const alpha = i === triangleCount - 1 ? 0.7 : 0.4;
-
-                    const p1 = this.worldToPixel(tri.p1.x, tri.p1.y);
-                    const p2 = this.worldToPixel(tri.p2.x, tri.p2.y);
-                    const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
-
-                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
-                    ctx.strokeStyle = i === triangleCount - 1 ? '#FF0000' : 'rgba(255, 0, 0, 0.6)';
-                    ctx.lineWidth = i === triangleCount - 1 ? 3 : 2;
-
-                    ctx.beginPath();
-                    ctx.moveTo(p1.x, p1.y);
-                    ctx.lineTo(p2.x, p2.y);
-                    ctx.lineTo(p3.x, p3.y);
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.stroke();
-
-                    // Label the current triangle
-                    if (i === triangleCount - 1) {
-                        const centerX = (p1.x + p2.x + p3.x) / 3;
-                        const centerY = (p1.y + p2.y + p3.y) / 3;
-                        ctx.fillStyle = '#FFFFFF';
-                        ctx.strokeStyle = '#000000';
-                        ctx.lineWidth = 3;
-                        ctx.font = 'bold 14px monospace';
-                        const label = `T${i + 1}: ${tri.area.toFixed(4)}`;
-                        ctx.strokeText(label, centerX - 40, centerY);
-                        ctx.fillText(label, centerX - 40, centerY);
+                    if (component.type === 'triangle') {
+                        this.drawAnimatedTriangle(ctx, component.data, isCurrent, ++triangleCount);
+                    } else if (component.type === 'sector') {
+                        this.drawAnimatedSector(ctx, component.data, isCurrent, ++sectorCount);
                     }
                 }
 
-                // Draw sectors up to current step
-                for (let i = 0; i < Math.min(sectorCount, sectors.length); i++) {
-                    const sec = sectors[i];
-                    const alpha = i === sectorCount - 1 ? 0.7 : 0.4;
+                // Draw progress info
+                this.drawAnimationProgress(ctx, triangleCount, sectorCount);
+            }
 
-                    const center = this.worldToPixel(sec.cx, sec.cy);
-                    const radius = sec.r * this.scale;
+            /**
+             * Draw a single animated triangle
+             */
+            drawAnimatedTriangle(ctx, tri, isCurrent, index) {
+                const p1 = this.worldToPixel(tri.p1.x, tri.p1.y);
+                const p2 = this.worldToPixel(tri.p2.x, tri.p2.y);
+                const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
 
-                    ctx.fillStyle = `rgba(0, 0, 255, ${alpha})`;
-                    ctx.strokeStyle = i === sectorCount - 1 ? '#0000FF' : 'rgba(0, 0, 255, 0.6)';
-                    ctx.lineWidth = i === sectorCount - 1 ? 3 : 2;
+                // Color by sign of area: positive = blue, negative = red
+                const isPositive = tri.area >= 0;
+                const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
+                const highlightColor = isPositive ? '#0080FF' : '#FF4000';
 
-                    ctx.beginPath();
-                    ctx.moveTo(center.x, center.y);
-                    ctx.arc(center.x, center.y, radius, -sec.startAngle, -sec.endAngle, true);
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.stroke();
+                ctx.fillStyle = isCurrent ? `rgba(${baseColor}, 0.7)` : `rgba(${baseColor}, 0.4)`;
+                ctx.strokeStyle = isCurrent ? highlightColor : `rgba(${baseColor}, 0.6)`;
+                ctx.lineWidth = isCurrent ? 3 : 2;
 
-                    // Label the current sector
-                    if (i === sectorCount - 1) {
-                        const midAngle = (sec.startAngle + sec.endAngle) / 2;
-                        const labelRadius = radius * 0.6;
-                        const labelX = center.x + labelRadius * Math.cos(midAngle);
-                        const labelY = center.y - labelRadius * Math.sin(midAngle);
-                        ctx.fillStyle = '#FFFFFF';
-                        ctx.strokeStyle = '#000000';
-                        ctx.lineWidth = 3;
-                        ctx.font = 'bold 14px monospace';
-                        const label = `S${i + 1}: ${sec.area.toFixed(4)}`;
-                        ctx.strokeText(label, labelX - 40, labelY);
-                        ctx.fillText(label, labelX - 40, labelY);
-                    }
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.lineTo(p3.x, p3.y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                if (isCurrent) {
+                    const centerX = (p1.x + p2.x + p3.x) / 3;
+                    const centerY = (p1.y + p2.y + p3.y) / 3;
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 3;
+                    ctx.font = 'bold 14px monospace';
+                    const label = `T${index}: ${tri.area.toFixed(4)}`;
+                    ctx.strokeText(label, centerX - 40, centerY);
+                    ctx.fillText(label, centerX - 40, centerY);
                 }
+            }
 
-                // Draw progress indicator
-                const totalSteps = triangles.length + sectors.length;
+            /**
+             * Draw a single animated sector
+             */
+            drawAnimatedSector(ctx, sec, isCurrent, index) {
+                const center = this.worldToPixel(sec.cx, sec.cy);
+                const radius = sec.r * this.scale;
+
+                // Color by sign of area: positive = blue, negative = red
+                const isPositive = sec.area >= 0;
+                const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
+                const highlightColor = isPositive ? '#0080FF' : '#FF4000';
+
+                ctx.fillStyle = isCurrent ? `rgba(${baseColor}, 0.7)` : `rgba(${baseColor}, 0.4)`;
+                ctx.strokeStyle = isCurrent ? highlightColor : `rgba(${baseColor}, 0.6)`;
+                ctx.lineWidth = isCurrent ? 3 : 2;
+
+                ctx.beginPath();
+                ctx.moveTo(center.x, center.y);
+                ctx.arc(center.x, center.y, radius, -sec.startAngle, -sec.endAngle, true);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                if (isCurrent) {
+                    const midAngle = (sec.startAngle + sec.endAngle) / 2;
+                    const labelRadius = radius * 0.6;
+                    const labelX = center.x + labelRadius * Math.cos(midAngle);
+                    const labelY = center.y - labelRadius * Math.sin(midAngle);
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 3;
+                    ctx.font = 'bold 14px monospace';
+                    const label = `S${index}: ${sec.area.toFixed(4)}`;
+                    ctx.strokeText(label, labelX - 40, labelY);
+                    ctx.fillText(label, labelX - 40, labelY);
+                }
+            }
+
+            /**
+             * Draw animation progress information
+             */
+            drawAnimationProgress(ctx, triangleCount, sectorCount) {
+                const totalTriangles = this.animationComponents.filter(c => c.type === 'triangle').length;
+                const totalSectors = this.animationComponents.filter(c => c.type === 'sector').length;
+
                 ctx.fillStyle = '#FF9800';
                 ctx.font = 'bold 16px monospace';
 
-                // Only show progress if we have steps to show
-                if (totalSteps > 0 && this.animationStep > 0) {
-                    ctx.fillText(`Step ${this.animationStep} / ${totalSteps}`, 10, 85);
-
-                    if (this.animationStep <= triangles.length) {
-                        ctx.fillText(`Drawing Triangles (${this.animationStep}/${triangles.length})`, 10, 105);
-                    } else {
-                        ctx.fillText(`Drawing Sectors (${sectorCount}/${sectors.length})`, 10, 105);
-                    }
+                if (this.animationStep > 0 && this.animationStep <= this.animationComponents.length) {
+                    ctx.fillText(`Step ${this.animationStep} / ${this.animationComponents.length}`, 10, 85);
+                    ctx.fillText(`Triangles: ${triangleCount}/${totalTriangles}, Sectors: ${sectorCount}/${totalSectors}`, 10, 105);
                 }
             }
+
         }
 
         window.addEventListener('load', () => {
