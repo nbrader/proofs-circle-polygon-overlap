@@ -926,26 +926,79 @@
                     }
                 }
 
-                // Add shape vertices inside or on circle
+                // Create sectors in polygon edge order (no angle sorting!)
+                // Strategy: Track entry/exit points and create sectors from exit to next entry
+
+                // Build list of boundary points with entry/exit classification
+                const boundaryPts = [];
                 for (let i = 0; i < shapeVerts.length; i++) {
-                    const v = shapeVerts[i];
-                    const dx = v.x - cx;
-                    const dy = v.y - cy;
-                    const distSq = dx * dx + dy * dy;
-                    if (distSq <= r * r + 1e-12) {
-                        circlePts.push({
-                            x: v.x,
-                            y: v.y,
+                    const v1 = shapeVerts[i];
+                    const v2 = shapeVerts[(i + 1) % shapeVerts.length];
+                    const p1 = { x: v1.x - cx, y: v1.y - cy };
+                    const p2 = { x: v2.x - cx, y: v2.y - cy };
+
+                    // Check if vertices are inside circle
+                    const v1DistSq = p1.x * p1.x + p1.y * p1.y;
+                    const v2DistSq = p2.x * p2.x + p2.y * p2.y;
+                    const v1Inside = v1DistSq <= r * r + 1e-9;
+                    const v2Inside = v2DistSq <= r * r + 1e-9;
+
+                    // Get intersections on this edge
+                    const intersections = this.circleSegmentIntersections(p1, p2, r);
+
+                    // Add start vertex if inside circle
+                    if (v1Inside) {
+                        boundaryPts.push({
+                            x: v1.x, y: v1.y,
                             edgeIndex: i,
-                            edgeParam: 0  // Vertex i is at the start of edge i (t=0)
+                            edgeParam: 0,
+                            isVertex: true,
+                            isEntry: false,  // Vertices aren't entry/exit points
+                            isExit: false
+                        });
+                    }
+
+                    // Add intersections in order along edge, classifying as entry or exit
+                    for (let hitIdx = 0; hitIdx < intersections.length; hitIdx++) {
+                        const hit = intersections[hitIdx];
+
+                        // Determine if this is entry or exit by checking the direction
+                        let isEntry = false;
+                        let isExit = false;
+
+                        if (intersections.length === 1) {
+                            // Single intersection
+                            if (!v1Inside && v2Inside) {
+                                isEntry = true;  // Going from outside to inside
+                            } else if (v1Inside && !v2Inside) {
+                                isExit = true;   // Going from inside to outside
+                            }
+                        } else if (intersections.length === 2) {
+                            // Two intersections on this edge
+                            if (v1Inside && v2Inside) {
+                                // Exit then re-enter: first is exit, second is entry
+                                isExit = (hitIdx === 0);
+                                isEntry = (hitIdx === 1);
+                            } else if (!v1Inside && !v2Inside) {
+                                // Enter then exit: first is entry, second is exit
+                                isEntry = (hitIdx === 0);
+                                isExit = (hitIdx === 1);
+                            }
+                        }
+
+                        boundaryPts.push({
+                            x: hit.x + cx, y: hit.y + cy,
+                            edgeIndex: i,
+                            edgeParam: hit.t,
+                            isVertex: false,
+                            isEntry: isEntry,
+                            isExit: isExit
                         });
                     }
                 }
 
-                // If no intersections and center inside shape, check if circle is fully inside
-                if (circlePts.length === 0 && this.pointInPolygon(cx, cy)) {
-                    // Check if all points on the circle are inside the polygon
-                    // Sample a few points around the circle
+                // Special case: circle fully inside polygon
+                if (boundaryPts.length === 0 && this.pointInPolygon(cx, cy)) {
                     let allInside = true;
                     for (let i = 0; i < 8; i++) {
                         const angle = i * Math.PI / 4;
@@ -959,61 +1012,66 @@
                     if (allInside) {
                         if (collectData) {
                             return { area: Math.PI * r * r, triangles: [], sectors: [{
-                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, area: Math.PI * r * r
+                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, area: Math.PI * r * r,
+                                fromEdge: 0, fromParam: 0, toEdge: 0, toParam: 0
                             }] };
                         }
                         return Math.PI * r * r;
                     }
                 }
 
-                // Unique angles for arcs (with edge tracking and polygon position)
-                const angleData = [];
-                const seen = new Set();
-                for (let idx = 0; idx < circlePts.length; idx++) {
-                    const p = circlePts[idx];
-                    const ang = Math.atan2(p.y - cy, p.x - cx);
-                    const key = Math.round(ang * 1e9);
-                    if (!seen.has(key)) {
-                        seen.add(key);
-                        angleData.push({
-                            angle: ang,
-                            edgeIndex: p.edgeIndex,
-                            edgeParam: p.edgeParam,  // Position along polygon edge
-                            originalOrder: idx
-                        });
-                    }
-                }
-                angleData.sort((a, b) => a.angle - b.angle);
+                // Create sectors: from each exit point to the next entry point in polygon order
+                if (collectData && boundaryPts.length >= 2) {
+                    console.log(`\n--- Boundary Points (${boundaryPts.length}) ---`);
+                    boundaryPts.forEach((pt, idx) => {
+                        const type = pt.isEntry ? 'ENTRY' : pt.isExit ? 'EXIT' : 'VERTEX';
+                        console.log(`[${idx}] ${type} at ${pt.edgeIndex}:${pt.edgeParam.toFixed(3)} (${pt.x.toFixed(3)}, ${pt.y.toFixed(3)})`);
+                    });
 
-                if (angleData.length >= 2) {
-                    for (let i = 0; i < angleData.length; i++) {
-                        const data1 = angleData[i];
-                        const data2 = angleData[(i + 1) % angleData.length];
-                        const a1 = data1.angle;
-                        const a2 = data2.angle;
-                        const delta = ((a2 - a1 + 2 * Math.PI) % (2 * Math.PI));
-                        const midAngle = a1 + delta / 2;
-                        const midPoint = {
-                            x: cx + r * Math.cos(midAngle),
-                            y: cy + r * Math.sin(midAngle)
-                        };
-                        if (this.pointInPolygon(midPoint.x, midPoint.y)) {
+                    for (let i = 0; i < boundaryPts.length; i++) {
+                        const pt = boundaryPts[i];
+
+                        // Only create sectors starting from exit points
+                        if (!pt.isExit) continue;
+
+                        // Find the next entry point in polygon order
+                        let nextEntry = null;
+                        for (let j = 1; j < boundaryPts.length; j++) {
+                            const candidateIdx = (i + j) % boundaryPts.length;
+                            const candidate = boundaryPts[candidateIdx];
+                            if (candidate.isEntry) {
+                                nextEntry = candidate;
+                                break;
+                            }
+                        }
+
+                        if (nextEntry) {
+                            // Compute angles for the sector
+                            const dx1 = pt.x - cx, dy1 = pt.y - cy;
+                            const dx2 = nextEntry.x - cx, dy2 = nextEntry.y - cy;
+                            const a1 = Math.atan2(dy1, dx1);
+                            const a2 = Math.atan2(dy2, dx2);
+
+                            // Compute angle delta
+                            let delta = a2 - a1;
+                            while (delta <= 0) delta += 2 * Math.PI;
+                            while (delta > 2 * Math.PI) delta -= 2 * Math.PI;
+
+                            console.log(`Sector ${pt.edgeIndex}:${pt.edgeParam.toFixed(3)} -> ${nextEntry.edgeIndex}:${nextEntry.edgeParam.toFixed(3)}`);
+
                             const sectorArea = 0.5 * r * r * delta;
                             area += sectorArea;
-                            if (collectData) {
-                                // Sector bridges from data1 to data2 on polygon
-                                sectors.push({
-                                    cx, cy, r,
-                                    startAngle: a1,
-                                    endAngle: a2,
-                                    area: sectorArea,
-                                    fromEdge: data1.edgeIndex,
-                                    fromParam: data1.edgeParam,  // Start position on polygon
-                                    toEdge: data2.edgeIndex,
-                                    toParam: data2.edgeParam,    // End position on polygon
-                                    fromOrder: data1.originalOrder
-                                });
-                            }
+
+                            sectors.push({
+                                cx, cy, r,
+                                startAngle: a1,
+                                endAngle: a2,
+                                area: sectorArea,
+                                fromEdge: pt.edgeIndex,
+                                fromParam: pt.edgeParam,
+                                toEdge: nextEntry.edgeIndex,
+                                toParam: nextEntry.edgeParam
+                            });
                         }
                     }
                 }
@@ -2051,6 +2109,29 @@
                         const elem = elements[idx];
                         const type = elem.type.charAt(0).toUpperCase();
                         console.log(`    ${pos}. [${idx}] ${type} ${elem.startPoint} -> ${elem.endPoint}`);
+                    });
+
+                    // Show geometric endpoints to verify continuity
+                    console.log('  Geometric Trace (boundary endpoints):');
+                    orderedIndices.forEach((idx, pos) => {
+                        const elem = elements[idx];
+                        const data = elem.data;
+
+                        if (elem.type === 'triangle') {
+                            // For triangles: p2 and p3 are the boundary edge endpoints
+                            const p2 = `(${data.p2.x.toFixed(3)}, ${data.p2.y.toFixed(3)})`;
+                            const p3 = `(${data.p3.x.toFixed(3)}, ${data.p3.y.toFixed(3)})`;
+                            console.log(`    ${pos}. T: ${p2} → ${p3}`);
+                        } else {
+                            // For sectors: compute arc endpoints
+                            const startX = data.cx + data.r * Math.cos(data.startAngle);
+                            const startY = data.cy + data.r * Math.sin(data.startAngle);
+                            const endX = data.cx + data.r * Math.cos(data.endAngle);
+                            const endY = data.cy + data.r * Math.sin(data.endAngle);
+                            const start = `(${startX.toFixed(3)}, ${startY.toFixed(3)})`;
+                            const end = `(${endX.toFixed(3)}, ${endY.toFixed(3)})`;
+                            console.log(`    ${pos}. S: ${start} → ${end}`);
+                        }
                     });
 
                     // Add elements from this component to the sequence
