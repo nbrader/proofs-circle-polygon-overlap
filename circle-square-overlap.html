@@ -296,6 +296,8 @@
                 this.animationStep = 0;
                 this.animationTimerId = null;
                 this.wasAnimatingBeforeDrag = false;
+                this.wasAnimatingBeforeParamChange = false;
+                this.restartAnimationTimer = null;
 
                 // Shape properties
                 this.shapeType = 'square';
@@ -314,92 +316,139 @@
                 this.updateDisplay();
             }
 
+            pauseAnimationForParamChange() {
+                if (this.restartAnimationTimer) {
+                    clearTimeout(this.restartAnimationTimer);
+                    this.restartAnimationTimer = null;
+                }
+                if (this.isAnimating) {
+                    this.wasAnimatingBeforeParamChange = true;
+                    this.stopAnimation();
+                }
+            }
+
+            scheduleAnimationRestart() {
+                if (!this.wasAnimatingBeforeParamChange) return;
+                if (this.restartAnimationTimer) {
+                    clearTimeout(this.restartAnimationTimer);
+                }
+                this.restartAnimationTimer = setTimeout(() => {
+                    this.restartAnimationTimer = null;
+                    if (this.wasAnimatingBeforeParamChange) {
+                        this.wasAnimatingBeforeParamChange = false;
+                        this.startAnimation();
+                    }
+                }, 400);
+            }
+
             setupControls() {
                 // Shape selector
                 document.getElementById('shapeType').addEventListener('change', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.shapeType = e.target.value;
                     this.updateShapeControls();
                     this.updateShapeVertices();
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 // Square controls
                 document.getElementById('squareSize').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.squareSize = parseFloat(e.target.value);
                     document.getElementById('squareSizeValue').textContent = this.squareSize.toFixed(2);
                     this.updateShapeVertices();
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 // Rectangle controls
                 document.getElementById('rectWidth').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.rectWidth = parseFloat(e.target.value);
                     document.getElementById('rectWidthValue').textContent = this.rectWidth.toFixed(2);
                     this.updateShapeVertices();
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('rectHeight').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.rectHeight = parseFloat(e.target.value);
                     document.getElementById('rectHeightValue').textContent = this.rectHeight.toFixed(2);
                     this.updateShapeVertices();
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 // Regular polygon controls
                 document.getElementById('polyRadius').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.polyRadius = parseFloat(e.target.value);
                     document.getElementById('polyRadiusValue').textContent = this.polyRadius.toFixed(2);
                     this.updateShapeVertices();
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 // Custom vertices
                 document.getElementById('customVertices').addEventListener('input', (e) => {
                     try {
+                        this.pauseAnimationForParamChange();
                         this.customVertices = JSON.parse(e.target.value);
                         this.updateShapeVertices();
                         this.updateDisplay();
                         this.update3DSurface();
+                        this.scheduleAnimationRestart();
                     } catch (err) {
                         console.error('Invalid JSON for vertices:', err);
                     }
                 });
 
                 document.getElementById('radius').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.R = parseFloat(e.target.value);
                     document.getElementById('radiusValue').textContent = `R = ${this.R.toFixed(2)}`;
                     this.updateDisplay();
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('scale').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.scale = parseFloat(e.target.value);
                     document.getElementById('scaleValue').textContent = this.scale;
                     this.updateDisplay();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('panX').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.panX = parseFloat(e.target.value);
                     document.getElementById('panXValue').textContent = this.panX.toFixed(2);
                     this.updateDisplay();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('panY').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.panY = parseFloat(e.target.value);
                     document.getElementById('panYValue').textContent = this.panY.toFixed(2);
                     this.updateDisplay();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('resolution').addEventListener('input', (e) => {
+                    this.pauseAnimationForParamChange();
                     this.resolution = parseInt(e.target.value);
                     document.getElementById('resolutionValue').textContent = this.resolution;
                     this.update3DSurface();
+                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('showGrid').addEventListener('change', () => {
@@ -422,6 +471,7 @@
 
                 // Draw polygon button
                 document.getElementById('drawPolygonBtn').addEventListener('click', () => {
+                    this.pauseAnimationForParamChange();
                     this.isDrawingPolygon = !this.isDrawingPolygon;
                     if (this.isDrawingPolygon) {
                         this.polygonVertices = [];
@@ -438,6 +488,7 @@
                         }
                     }
                     this.updateDisplay();
+                    this.scheduleAnimationRestart();
                 });
 
                 // Animation button
@@ -555,9 +606,29 @@
                         break;
                     }
                 }
+
+                // Enforce consistent counter-clockwise orientation for positive signed areas
+                this.ensureCounterClockwise();
+            }
+
+            polygonSignedArea(vertices) {
+                let acc = 0;
+                for (let i = 0; i < vertices.length; i++) {
+                    const j = (i + 1) % vertices.length;
+                    acc += vertices[i].x * vertices[j].y - vertices[i].y * vertices[j].x;
+                }
+                return 0.5 * acc;
+            }
+
+            ensureCounterClockwise() {
+                if (this.shapeVertices.length < 3) return;
+                if (this.polygonSignedArea(this.shapeVertices) < 0) {
+                    this.shapeVertices.reverse();
+                }
             }
 
             finishPolygonDrawing() {
+                this.pauseAnimationForParamChange();
                 if (this.polygonVertices.length >= 3) {
                     this.customVertices = this.polygonVertices;
                     document.getElementById('customVertices').value = JSON.stringify(this.customVertices);
@@ -569,6 +640,7 @@
                 document.getElementById('drawPolygonBtn').textContent = '🖊️ Draw Custom Polygon';
                 this.updateDisplay();
                 this.update3DSurface();
+                this.scheduleAnimationRestart();
             }
 
             pixelToWorld(px, py) {
@@ -658,6 +730,7 @@
                 // Mouse wheel zoom
                 this.canvas2d.addEventListener('wheel', (e) => {
                     e.preventDefault();
+                    this.pauseAnimationForParamChange();
                     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
                     const newScale = Math.max(10, Math.min(500, this.scale * zoomFactor));
 
@@ -682,6 +755,7 @@
                     document.getElementById('panYValue').textContent = this.panY.toFixed(2);
 
                     this.updateDisplay();
+                    this.scheduleAnimationRestart();
                 });
             }
 
@@ -926,6 +1000,16 @@
                     }
                 }
 
+                // Special case: polygon fully inside circle (no intersections, triangles already cover it)
+                const allVertsInside = shapeVerts.every((v) => {
+                    const dx = v.x - cx;
+                    const dy = v.y - cy;
+                    return dx * dx + dy * dy <= r * r + 1e-9;
+                });
+                if (allVertsInside && circlePts.length === 0) {
+                    return collectData ? { area, triangles, sectors: [] } : area;
+                }
+
                 // Special case: circle fully inside polygon
                 if (triangles.length === 0 && this.pointInPolygon(cx, cy)) {
                     let allInside = true;
@@ -949,100 +1033,56 @@
                     }
                 }
 
-                // Create sectors by connecting intersections in circle order
-                if (collectData && triangles.length > 0) {
-                    const numEdges = shapeVerts.length;
-                    const pointKey = (edgeIdx, param) => {
-                        if (Math.abs(param - 1.0) < 1e-6) {
-                            const nextEdge = (edgeIdx + 1) % numEdges;
-                            return `${nextEdge}:0.00000000`;
-                        }
-                        return `${edgeIdx}:${param.toFixed(8)}`;
-                    };
-
-                    // Collect all intersection points (triangle endpoints)
-                    const intersections = [];
-                    const intersectionSet = new Set();
-
-                    for (const tri of triangles) {
-                        for (const point of [
-                            { edge: tri.edgeIndex, param: tri.edgeParam, x: tri.p2.x, y: tri.p2.y },
-                            { edge: tri.edgeIndex, param: tri.edgeParamEnd, x: tri.p3.x, y: tri.p3.y }
-                        ]) {
-                            const key = pointKey(point.edge, point.param);
-                            if (!intersectionSet.has(key)) {
-                                intersectionSet.add(key);
-                                const dx = point.x - cx, dy = point.y - cy;
-                                intersections.push({
-                                    edge: point.edge,
-                                    param: point.param,
-                                    x: point.x,
-                                    y: point.y,
-                                    angle: Math.atan2(dy, dx),
-                                    key: key
-                                });
-                            }
+                // Build sectors by walking intersections in angular order; every gap gets one arc, never consecutive arcs.
+                if (collectData && circlePts.length > 0) {
+                    // Deduplicate intersection points by edge/parameter
+                    const dedupMap = new Map();
+                    for (const p of circlePts) {
+                        const key = `${p.edgeIndex}:${p.edgeParam.toFixed(8)}`;
+                        if (!dedupMap.has(key)) {
+                            dedupMap.set(key, {
+                                edge: p.edgeIndex,
+                                param: p.edgeParam,
+                                x: p.x,
+                                y: p.y,
+                                angle: Math.atan2(p.y - cy, p.x - cx)
+                            });
                         }
                     }
 
-                    // Sort intersections by angle to find next in circle order
-                    intersections.sort((a, b) => a.angle - b.angle);
+                    const intersections = Array.from(dedupMap.values()).sort((a, b) => a.angle - b.angle);
 
-                    console.log(`\n--- ${intersections.length} intersection points ---`);
+                    for (let i = 0; i < intersections.length; i++) {
+                        const a = intersections[i];
+                        const b = intersections[(i + 1) % intersections.length];
 
-                    // For each triangle, create sectors to close components
-                    for (let i = 0; i < triangles.length; i++) {
-                        const tri = triangles[i];
-                        const nextTri = triangles[(i + 1) % triangles.length];
-
-                        // Find triangle's end intersection in sorted list
-                        const endKey = pointKey(tri.edgeIndex, tri.edgeParamEnd);
-                        const endIdx = intersections.findIndex(int => int.key === endKey);
-
-                        if (endIdx === -1) continue;
-
-                        const endInt = intersections[endIdx];
-
-                        // Find next intersection in circle order
-                        const nextIdx = (endIdx + 1) % intersections.length;
-                        const nextInt = intersections[nextIdx];
-
-                        // Check if next in circle is the start of next triangle in polygon order
-                        const nextTriStartKey = pointKey(nextTri.edgeIndex, nextTri.edgeParam);
-
-                        // Create sector from this triangle's end to next intersection in circle
-                        // But only if the arc is inside the polygon (part of overlap)
-                        const a1 = endInt.angle;
-                        const a2 = nextInt.angle;
-
-                        let delta = a2 - a1;
-                        if (delta <= 0) delta += 2 * Math.PI;
-
-                        // Check if arc midpoint is inside polygon
-                        const midAngle = a1 + delta / 2;
-                        const midX = cx + r * Math.cos(midAngle);
-                        const midY = cy + r * Math.sin(midAngle);
-                        const arcInsidePolygon = this.pointInPolygon(midX, midY);
-
-                        if (arcInsidePolygon) {
-                            console.log(`  Sector after tri ${i}: ${endInt.edge}:${endInt.param.toFixed(3)} -> ${nextInt.edge}:${nextInt.param.toFixed(3)}, delta=${delta.toFixed(3)}`);
-
-                            const sectorArea = 0.5 * r * r * delta;
-                            area += sectorArea;
-
-                            sectors.push({
-                                cx, cy, r,
-                                startAngle: a1,
-                                endAngle: a2,
-                                area: sectorArea,
-                                fromEdge: endInt.edge,
-                                fromParam: endInt.param,
-                                toEdge: nextInt.edge,
-                                toParam: nextInt.param
-                            });
-                        } else {
-                            console.log(`  Skipping sector (outside polygon): ${endInt.edge}:${endInt.param.toFixed(3)} -> ${nextInt.edge}:${nextInt.param.toFixed(3)}`);
+                        let start = a.angle;
+                        let end = b.angle;
+                        let delta = end - start;
+                        if (delta <= 0) {
+                            delta += 2 * Math.PI;
+                            end = start + delta;
                         }
+
+                        // Keep arc only if its midpoint lies inside the polygon
+                        const mid = start + delta / 2;
+                        const mx = cx + r * Math.cos(mid);
+                        const my = cy + r * Math.sin(mid);
+                        if (!this.pointInPolygon(mx, my)) continue;
+
+                        const sectorArea = 0.5 * r * r * delta;
+                        area += sectorArea;
+
+                        sectors.push({
+                            cx, cy, r,
+                            startAngle: start,
+                            endAngle: end,
+                            area: sectorArea,
+                            fromEdge: a.edge,
+                            fromParam: a.param,
+                            toEdge: b.edge,
+                            toParam: b.param
+                        });
                     }
                 }
 
@@ -1227,8 +1267,10 @@
 
                         const overlap = this.calculateOverlap(x, -z, this.R);
 
-                        // Normalize height to π (max possible overlap) so it stays in view
-                        vertices[idx + 1] = overlap / Math.PI;  // Green - height (normalized)
+                        const circleArea = Math.PI * this.R * this.R;
+
+                        // Normalize height to circle area so it stays in view
+                        vertices[idx + 1] = overlap / circleArea;  // Green - height (normalized)
                         vertices[idx + 2] = z;                   // Blue - input
                     }
                 }
