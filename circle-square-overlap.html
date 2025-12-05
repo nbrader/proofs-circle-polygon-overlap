@@ -217,6 +217,14 @@
                     DRAWING MODE (click to add vertices, double-click to finish)
                 </span>
             </div>
+            <div class="control-group">
+                <button id="animateBtn" style="padding: 8px 16px; font-size: 14px; cursor: pointer; background-color: #FF9800; color: white; border: none; border-radius: 4px;">
+                    ▶️ Animate Overlap Calculation
+                </button>
+                <span id="animationStatus" style="margin-left: 10px; font-weight: bold; display: none; color: #FF9800;">
+                    ANIMATING...
+                </span>
+            </div>
         </div>
 
         <div class="case-indicator" id="caseIndicator">Domain: -</div>
@@ -281,6 +289,13 @@
                 this.resolution = 120;
                 this.currentCase = '';
                 this.debugText = '';
+
+                // Animation state
+                this.isAnimating = false;
+                this.animationStep = 0;
+                this.animationData = null;
+                this.animationFrameId = null;
+                this.wasAnimatingBeforeDrag = false;
 
                 // Shape properties
                 this.shapeType = 'square';
@@ -423,6 +438,15 @@
                         }
                     }
                     this.updateDisplay();
+                });
+
+                // Animation button
+                document.getElementById('animateBtn').addEventListener('click', () => {
+                    if (this.isAnimating) {
+                        this.stopAnimation();
+                    } else {
+                        this.startAnimation();
+                    }
                 });
             }
 
@@ -580,6 +604,11 @@
                     const dy = world.y - this.cy;
                     if (dx * dx + dy * dy <= this.R * this.R) {
                         this.isDragging = true;
+                        // Pause animation while dragging
+                        if (this.isAnimating) {
+                            this.wasAnimatingBeforeDrag = true;
+                            this.pauseAnimation();
+                        }
                     }
                 });
 
@@ -604,11 +633,25 @@
                 });
 
                 this.canvas2d.addEventListener('mouseup', () => {
-                    this.isDragging = false;
+                    if (this.isDragging) {
+                        this.isDragging = false;
+                        // Resume animation if it was running before drag
+                        if (this.wasAnimatingBeforeDrag) {
+                            this.wasAnimatingBeforeDrag = false;
+                            this.resumeAnimation();
+                        }
+                    }
                 });
 
                 this.canvas2d.addEventListener('mouseleave', () => {
-                    this.isDragging = false;
+                    if (this.isDragging) {
+                        this.isDragging = false;
+                        // Resume animation if it was running before drag
+                        if (this.wasAnimatingBeforeDrag) {
+                            this.wasAnimatingBeforeDrag = false;
+                            this.resumeAnimation();
+                        }
+                    }
                 });
 
                 // Mouse wheel zoom
@@ -831,11 +874,13 @@
                 return hits.sort((a, b) => a.t - b.t);
             }
 
-            overlapByBoundary(cx, cy, r) {
+            overlapByBoundary(cx, cy, r, collectData = false) {
                 const shapeVerts = this.shapeVertices;
 
                 const circlePts = [];
                 let area = 0;
+                const triangles = [];
+                const sectors = [];
 
                 // Line contributions along shape edges
                 for (let i = 0; i < shapeVerts.length; i++) {
@@ -858,7 +903,17 @@
                         const mid = { x: 0.5 * (a.x + b.x), y: 0.5 * (a.y + b.y) };
                         const midInside = mid.x * mid.x + mid.y * mid.y <= r * r;
                         if (midInside) {
-                            area += 0.5 * (a.x * b.y - a.y * b.x);
+                            const triangleArea = 0.5 * (a.x * b.y - a.y * b.x);
+                            area += triangleArea;
+                            if (collectData) {
+                                triangles.push({
+                                    p1: { x: cx, y: cy },
+                                    p2: { x: a.x + cx, y: a.y + cy },
+                                    p3: { x: b.x + cx, y: b.y + cy },
+                                    area: triangleArea,
+                                    edgeIndex: i
+                                });
+                            }
                         }
                     }
                 }
@@ -888,6 +943,11 @@
                         }
                     }
                     if (allInside) {
+                        if (collectData) {
+                            return { area: Math.PI * r * r, triangles: [], sectors: [{
+                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, area: Math.PI * r * r
+                            }] };
+                        }
                         return Math.PI * r * r;
                     }
                 }
@@ -916,13 +976,25 @@
                             y: cy + r * Math.sin(midAngle)
                         };
                         if (this.pointInPolygon(midPoint.x, midPoint.y)) {
-                            area += 0.5 * r * r * delta;
+                            const sectorArea = 0.5 * r * r * delta;
+                            area += sectorArea;
+                            if (collectData) {
+                                sectors.push({
+                                    cx, cy, r,
+                                    startAngle: a1,
+                                    endAngle: a2,
+                                    area: sectorArea
+                                });
+                            }
                         }
                     }
                 }
 
                 // Return signed area (should be positive if boundary walk is correct)
                 // Per IDEA.txt: "use signed area in order to deduct negatives correctly"
+                if (collectData) {
+                    return { area, triangles, sectors };
+                }
                 return area;
             }
 
@@ -1235,6 +1307,9 @@
 
                 // Draw overlap region
                 this.drawOverlapRegion();
+
+                // Draw animated components (triangles and sectors) if animation is active
+                this.drawAnimatedComponents();
 
                 // Draw polygon being drawn
                 if (this.isDrawingPolygon && this.polygonVertices.length > 0) {
@@ -1673,6 +1748,175 @@
                 document.getElementById('caseIndicator').textContent = getDomainName(this.currentCase);
 
                 document.getElementById('debugInfo').textContent = this.debugText;
+            }
+
+            startAnimation() {
+                // Collect animation data
+                const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
+                this.animationData = result;
+                this.animationStep = 0;
+                this.isAnimating = true;
+
+                // Update UI
+                document.getElementById('animateBtn').textContent = '⏸️ Stop Animation';
+                document.getElementById('animationStatus').style.display = 'inline';
+
+                // Start animation loop
+                this.animateNextStep();
+            }
+
+            stopAnimation() {
+                this.isAnimating = false;
+                this.animationStep = 0;
+                this.animationData = null;
+
+                if (this.animationFrameId) {
+                    clearTimeout(this.animationFrameId);
+                    this.animationFrameId = null;
+                }
+
+                // Update UI
+                document.getElementById('animateBtn').textContent = '▶️ Animate Overlap Calculation';
+                document.getElementById('animationStatus').style.display = 'none';
+
+                // Redraw without animation
+                this.updateDisplay();
+            }
+
+            pauseAnimation() {
+                // Stop the animation timer but keep the state
+                if (this.animationFrameId) {
+                    clearTimeout(this.animationFrameId);
+                    this.animationFrameId = null;
+                }
+                this.isAnimating = false;
+            }
+
+            resumeAnimation() {
+                // Recollect animation data for new position and restart from step 0
+                const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
+                this.animationData = result;
+                this.animationStep = 0;
+                this.isAnimating = true;
+
+                // Restart animation loop
+                this.animateNextStep();
+            }
+
+            animateNextStep() {
+                if (!this.isAnimating || !this.animationData) return;
+
+                const totalSteps = this.animationData.triangles.length + this.animationData.sectors.length;
+
+                // Redraw with current animation step
+                this.updateDisplay();
+
+                this.animationStep++;
+
+                if (this.animationStep > totalSteps) {
+                    // Animation complete, restart
+                    this.animationStep = 0;
+                }
+
+                // Schedule next step
+                this.animationFrameId = setTimeout(() => this.animateNextStep(), 800);
+            }
+
+            drawAnimatedComponents() {
+                if (!this.isAnimating || !this.animationData) return;
+
+                const ctx = this.ctx;
+                const { triangles, sectors } = this.animationData;
+
+                // Determine what to draw based on current step
+                const triangleCount = Math.min(this.animationStep, triangles.length);
+                const sectorCount = Math.max(0, this.animationStep - triangles.length);
+
+                // Draw triangles up to current step
+                for (let i = 0; i < triangleCount; i++) {
+                    const tri = triangles[i];
+                    const alpha = i === triangleCount - 1 ? 0.7 : 0.4;
+
+                    const p1 = this.worldToPixel(tri.p1.x, tri.p1.y);
+                    const p2 = this.worldToPixel(tri.p2.x, tri.p2.y);
+                    const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
+
+                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    ctx.strokeStyle = i === triangleCount - 1 ? '#FF0000' : 'rgba(255, 0, 0, 0.6)';
+                    ctx.lineWidth = i === triangleCount - 1 ? 3 : 2;
+
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.lineTo(p3.x, p3.y);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Label the current triangle
+                    if (i === triangleCount - 1) {
+                        const centerX = (p1.x + p2.x + p3.x) / 3;
+                        const centerY = (p1.y + p2.y + p3.y) / 3;
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.strokeStyle = '#000000';
+                        ctx.lineWidth = 3;
+                        ctx.font = 'bold 14px monospace';
+                        const label = `T${i + 1}: ${tri.area.toFixed(4)}`;
+                        ctx.strokeText(label, centerX - 40, centerY);
+                        ctx.fillText(label, centerX - 40, centerY);
+                    }
+                }
+
+                // Draw sectors up to current step
+                for (let i = 0; i < Math.min(sectorCount, sectors.length); i++) {
+                    const sec = sectors[i];
+                    const alpha = i === sectorCount - 1 ? 0.7 : 0.4;
+
+                    const center = this.worldToPixel(sec.cx, sec.cy);
+                    const radius = sec.r * this.scale;
+
+                    ctx.fillStyle = `rgba(0, 0, 255, ${alpha})`;
+                    ctx.strokeStyle = i === sectorCount - 1 ? '#0000FF' : 'rgba(0, 0, 255, 0.6)';
+                    ctx.lineWidth = i === sectorCount - 1 ? 3 : 2;
+
+                    ctx.beginPath();
+                    ctx.moveTo(center.x, center.y);
+                    ctx.arc(center.x, center.y, radius, -sec.startAngle, -sec.endAngle, true);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Label the current sector
+                    if (i === sectorCount - 1) {
+                        const midAngle = (sec.startAngle + sec.endAngle) / 2;
+                        const labelRadius = radius * 0.6;
+                        const labelX = center.x + labelRadius * Math.cos(midAngle);
+                        const labelY = center.y - labelRadius * Math.sin(midAngle);
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.strokeStyle = '#000000';
+                        ctx.lineWidth = 3;
+                        ctx.font = 'bold 14px monospace';
+                        const label = `S${i + 1}: ${sec.area.toFixed(4)}`;
+                        ctx.strokeText(label, labelX - 40, labelY);
+                        ctx.fillText(label, labelX - 40, labelY);
+                    }
+                }
+
+                // Draw progress indicator
+                const totalSteps = triangles.length + sectors.length;
+                ctx.fillStyle = '#FF9800';
+                ctx.font = 'bold 16px monospace';
+
+                // Only show progress if we have steps to show
+                if (totalSteps > 0 && this.animationStep > 0) {
+                    ctx.fillText(`Step ${this.animationStep} / ${totalSteps}`, 10, 85);
+
+                    if (this.animationStep <= triangles.length) {
+                        ctx.fillText(`Drawing Triangles (${this.animationStep}/${triangles.length})`, 10, 105);
+                    } else {
+                        ctx.fillText(`Drawing Sectors (${sectorCount}/${sectors.length})`, 10, 105);
+                    }
+                }
             }
         }
 
