@@ -1010,28 +1010,39 @@
                         // Check if next in circle is the start of next triangle in polygon order
                         const nextTriStartKey = pointKey(nextTri.edgeIndex, nextTri.edgeParam);
 
-                        // Always create sector from this triangle's end to next intersection in circle
+                        // Create sector from this triangle's end to next intersection in circle
+                        // But only if the arc is inside the polygon (part of overlap)
                         const a1 = endInt.angle;
                         const a2 = nextInt.angle;
 
                         let delta = a2 - a1;
                         if (delta <= 0) delta += 2 * Math.PI;
 
-                        console.log(`  Sector after tri ${i}: ${endInt.edge}:${endInt.param.toFixed(3)} -> ${nextInt.edge}:${nextInt.param.toFixed(3)}, delta=${delta.toFixed(3)}`);
+                        // Check if arc midpoint is inside polygon
+                        const midAngle = a1 + delta / 2;
+                        const midX = cx + r * Math.cos(midAngle);
+                        const midY = cy + r * Math.sin(midAngle);
+                        const arcInsidePolygon = this.pointInPolygon(midX, midY);
 
-                        const sectorArea = 0.5 * r * r * delta;
-                        area += sectorArea;
+                        if (arcInsidePolygon) {
+                            console.log(`  Sector after tri ${i}: ${endInt.edge}:${endInt.param.toFixed(3)} -> ${nextInt.edge}:${nextInt.param.toFixed(3)}, delta=${delta.toFixed(3)}`);
 
-                        sectors.push({
-                            cx, cy, r,
-                            startAngle: a1,
-                            endAngle: a2,
-                            area: sectorArea,
-                            fromEdge: endInt.edge,
-                            fromParam: endInt.param,
-                            toEdge: nextInt.edge,
-                            toParam: nextInt.param
-                        });
+                            const sectorArea = 0.5 * r * r * delta;
+                            area += sectorArea;
+
+                            sectors.push({
+                                cx, cy, r,
+                                startAngle: a1,
+                                endAngle: a2,
+                                area: sectorArea,
+                                fromEdge: endInt.edge,
+                                fromParam: endInt.param,
+                                toEdge: nextInt.edge,
+                                toParam: nextInt.param
+                            });
+                        } else {
+                            console.log(`  Skipping sector (outside polygon): ${endInt.edge}:${endInt.param.toFixed(3)} -> ${nextInt.edge}:${nextInt.param.toFixed(3)}`);
+                        }
                     }
                 }
 
