@@ -949,6 +949,28 @@
                 return hits.sort((a, b) => a.t - b.t);
             }
 
+            // Compute minimum distance from point (px, py) to line segment from v1 to v2
+            distanceToSegment(px, py, v1, v2) {
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                const lengthSquared = dx * dx + dy * dy;
+
+                if (lengthSquared === 0) {
+                    // Degenerate segment (v1 == v2)
+                    const dpx = px - v1.x;
+                    const dpy = py - v1.y;
+                    return Math.sqrt(dpx * dpx + dpy * dpy);
+                }
+
+                // Project point onto line, clamped to segment
+                const t = Math.max(0, Math.min(1, ((px - v1.x) * dx + (py - v1.y) * dy) / lengthSquared));
+                const projX = v1.x + t * dx;
+                const projY = v1.y + t * dy;
+                const distX = px - projX;
+                const distY = py - projY;
+                return Math.sqrt(distX * distX + distY * distY);
+            }
+
             overlapByBoundary(cx, cy, r, collectData = false) {
                 const shapeVerts = this.shapeVertices;
 
@@ -1010,19 +1032,50 @@
                     return collectData ? { area, triangles, sectors: [] } : area;
                 }
 
-                // Special case: circle fully inside polygon
-                if (triangles.length === 0 && this.pointInPolygon(cx, cy)) {
-                    let allInside = true;
-                    for (let i = 0; i < 8; i++) {
-                        const angle = i * Math.PI / 4;
-                        const px = cx + r * Math.cos(angle);
-                        const py = cy + r * Math.sin(angle);
-                        if (!this.pointInPolygon(px, py)) {
-                            allInside = false;
+                // Special case: no overlap
+                // Exact test: center outside polygon AND all vertices farther than radius from center
+                if (!this.pointInPolygon(cx, cy)) {
+                    let noOverlap = true;
+                    for (const v of shapeVerts) {
+                        const dx = v.x - cx;
+                        const dy = v.y - cy;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq <= r * r) {
+                            noOverlap = false;
                             break;
                         }
                     }
-                    if (allInside) {
+                    if (noOverlap) {
+                        // Also verify no edge intersects the circle
+                        for (let i = 0; i < shapeVerts.length; i++) {
+                            const v1 = shapeVerts[i];
+                            const v2 = shapeVerts[(i + 1) % shapeVerts.length];
+                            const distToEdge = this.distanceToSegment(cx, cy, v1, v2);
+                            if (distToEdge <= r) {
+                                noOverlap = false;
+                                break;
+                            }
+                        }
+                        if (noOverlap) {
+                            return collectData ? { area: 0, triangles: [], sectors: [] } : 0;
+                        }
+                    }
+                }
+
+                // Special case: circle fully inside polygon
+                // Exact test: center inside polygon AND all edges farther than radius from center
+                if (triangles.length === 0 && this.pointInPolygon(cx, cy)) {
+                    let circleFullyInside = true;
+                    for (let i = 0; i < shapeVerts.length; i++) {
+                        const v1 = shapeVerts[i];
+                        const v2 = shapeVerts[(i + 1) % shapeVerts.length];
+                        const distToEdge = this.distanceToSegment(cx, cy, v1, v2);
+                        if (distToEdge <= r) {
+                            circleFullyInside = false;
+                            break;
+                        }
+                    }
+                    if (circleFullyInside) {
                         if (collectData) {
                             return { area: Math.PI * r * r, triangles: [], sectors: [{
                                 cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, area: Math.PI * r * r,
