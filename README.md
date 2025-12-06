@@ -1,28 +1,62 @@
 # proofs-square-circle-overlap
 
 Formal verification in Rocq (formerly Coq) of the overlap area between a circle
-and a square, both centered at the origin. The project provides a complete
-case-by-case analysis covering all possible configurations from full overlap
-to zero overlap, together with reference implementations in Haskell and Python.
+and a square, plus a general interactive visualization for arbitrary polygon-circle
+overlaps. The project provides case-by-case analysis for squares, a general
+boundary-walk algorithm for polygons, and reference implementations in Haskell
+and Python.
 
 ## Problem statement
 
-Given a circle of radius R centered at the origin and a square with side length
-2s also centered at the origin, compute the area of their intersection. The
-solution requires careful geometric decomposition based on the relationship
+**Core verification target:** Given a circle of radius R and a square with side
+length 2s (both centered at the origin), compute the area of their intersection.
+The solution requires careful geometric decomposition based on the relationship
 between R and s.
 
-The interactive `circle-square-overlap.html` samples the overlap kernel
-A(cx, cy) = ∫ 1_S(u) · 1_C(u−(cx,cy)) du — i.e., the convolution of the square
-and circle indicator functions at the offset (cx, cy). Both the 2D drag view
-and the 3D surface plot simply evaluate this kernel for different circle
-centers; they do not integrate it further.
+**General visualization:** The interactive viewer extends this to arbitrary convex
+and non-convex polygons, computing overlap areas using a boundary-walk algorithm
+that works for any polygon shape and circle position.
 
-Algorithm overview (HTML viewer):
-- Find circle–square edge intersections.
-- For each square edge, add the signed triangle area from the circle center to edge portions inside the circle.
-- For circle arcs that lie inside the square (between consecutive intersection angles), add the corresponding circular sector areas.
-- The boundary-walk structure generalizes to other shapes: replace square edges with the target shape’s boundary segments/curves and use the appropriate intersection tests plus triangle/sector (or curve) area primitives.
+## Interactive visualization: `circle-square-overlap.html`
+
+A fully interactive web application that visualizes polygon-circle overlap in both
+2D and 3D. Simply open the file in a modern web browser—no build step required.
+
+**Features:**
+- **Multiple shapes:** Square, rectangle, triangle, pentagon, hexagon, octagon,
+  custom polygons (draw your own or define via JSON)
+- **2D interactive view:** Drag the circle center, zoom/pan with mouse wheel,
+  see real-time overlap area calculation with visual decomposition into triangles
+  and sectors
+- **3D surface plot:** Visualize the overlap kernel A(cx, cy) as a surface over
+  all possible circle center positions (red/blue axes = inputs, green axis = overlap area)
+- **Animated overlap tracing:** Step-by-step visualization of the boundary-walk
+  algorithm showing how triangles and sectors are computed
+- **Exact geometric tests:** Uses precise point-to-segment distance calculations
+  (not sampling) for numerical stability—eliminates flickering spikes when
+  adjusting parameters
+
+The viewer computes A(cx, cy) = ∫ 1_P(u) · 1_C(u−(cx,cy)) du — the convolution
+of a polygon indicator function 1_P and circle indicator 1_C at offset (cx, cy).
+Both the 2D drag view and 3D surface plot evaluate this kernel for different
+circle centers.
+
+### Boundary-walk algorithm
+
+The general algorithm (implemented in the HTML viewer):
+1. **Find intersections:** Locate all circle–polygon edge intersection points
+2. **Edge triangles:** Walk polygon edges; for each segment inside the circle,
+   add the signed triangle area from circle center to segment endpoints
+3. **Arc sectors:** Walk circle arcs between consecutive intersections; if the
+   arc midpoint lies inside the polygon, add the circular sector area
+4. **Special cases** with exact geometric tests:
+   - **Polygon fully inside circle:** All vertices closer than radius → return polygon area
+   - **Circle fully inside polygon:** Center inside AND all edges farther than radius → return πR²
+   - **No overlap:** Center outside AND all vertices/edges farther than radius → return 0
+
+This structure generalizes to any polygon: the algorithm alternates between
+straight-line segments (triangles) and circular arcs (sectors), using signed
+areas to correctly handle complex boundary configurations.
 
 ## Goal: integrating over all circle centers
 
@@ -37,10 +71,10 @@ Thus, over all of ℝ² the total integral is just the product of the two areas,
 so the eight positional cases collapse. If circle centers are restricted to a
 bounded window instead, integrate this same convolution only over that window.
 
-## Case decomposition
+## Case decomposition (square-specific)
 
 The image `Rough/Area of overlap between circle and square - 2D (Tidy Working).png`
-illustrates the eight distinct cases that arise:
+illustrates the eight distinct cases that arise for the square-circle case:
 
 1. **Full circle contained** (s >> R): Overlap area = πR²
 2. **Circle extends beyond top/bottom** (moderate s):
@@ -59,18 +93,23 @@ illustrates the eight distinct cases that arise:
 
 Each case employs a combination of circular sectors, triangular corrections,
 and in the most general scenario a double integral over the overlapping domain.
+The general polygon algorithm unifies these cases through the boundary-walk approach.
 
 ## Repository layout
 
-- `Rocq/` – the formal development
+- **`circle-square-overlap.html`** – interactive web application for visualizing
+  polygon-circle overlap with 2D/3D views, animation, and multiple shape support
+- **`Spec.txt`** – specification of the overlap algorithm, correctness invariants,
+  and documented implementation notes
+- **`Rocq/`** – the formal development
   - `SquareCircleOverlap.v`: definitions of geometric primitives (sectors,
     triangles, segment areas), the case analysis, and the main area formula
   - `_CoqProject`: logical load paths (`-Q . SquareCircleOverlap`) and file list
-- `Haskell/` – informal reference implementation that mirrors the case analysis
+- **`Haskell/`** – informal reference implementation that mirrors the case analysis
   for numerical experimentation in GHCi
-- `Python/` – quick-running sanity checks that empirically validate the formulas
+- **`Python/`** – quick-running sanity checks that empirically validate the formulas
   against numerical integration
-- `Rough/` – working diagrams and visual aids, including the comprehensive
+- **`Rough/`** – working diagrams and visual aids, including the comprehensive
   8-case illustration
 
 ## Building the Rocq proofs
@@ -111,12 +150,24 @@ to ensure correctness before formalizing in Rocq.
 
 ## Current status
 
-- `Rocq/SquareCircleOverlap.v` is under active development
-- Case analysis structure is defined based on the 8-case decomposition
-- Formal proofs of area formulas are in progress
-- Haskell and Python reference implementations match the diagram specification
+- **Interactive visualization (`circle-square-overlap.html`):** Fully functional
+  with support for arbitrary polygons, exact geometric tests, and smooth numerical
+  behavior across all parameter ranges
+- **Rocq formal proofs (`Rocq/SquareCircleOverlap.v`):** Under active development,
+  focusing on the 8-case square-circle decomposition
+- **Haskell and Python implementations:** Match the square-specific case analysis
+  and serve as numerical references
+- **General polygon algorithm:** Implemented and tested in the HTML viewer;
+  boundary-walk approach confirmed to handle convex and non-convex shapes correctly
 
 To work on the development interactively, use your preferred Rocq/Coq IDE
 (CoqIDE, VS Code + VsCoq, Proof General), reload
 `Rocq/SquareCircleOverlap.v`, and re-run `make` after edits to ensure the
 project compiles.
+
+## Recent improvements
+
+- Replaced unreliable 8-point circle sampling with exact geometric distance tests
+  to eliminate numerical spikes and ensure stable behavior across all radius values
+- Implemented precise point-to-segment distance calculations for special case detection
+- Added comprehensive specification documentation in `Spec.txt`
