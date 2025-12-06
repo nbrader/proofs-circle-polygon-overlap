@@ -1,3 +1,34 @@
-Can we simplify the logic to be entirely in terms of drawing triangles to the centre of the circle for every part of the square perimeter inside the circle and drawing circular sectors to the centre of the circle for every circular arc inside the square?
+Original Question (Square-Circle Case)
+======================================
 
-You're meant to establish which segments and arcs to consider by finding all intersections and square points that fit on or in the circle, connect the parts of segments interior to the circle using those arcs to build the shape of the intersection of their interiors and then do the previously mentioned decomposition into sectors and triangles, making sure to use signed area in order to deduct negatives correctly.
+Can we simplify the logic to be entirely in terms of drawing triangles to the
+centre of the circle for every part of the square perimeter inside the circle
+and drawing circular sectors to the centre of the circle for every circular arc
+inside the square?
+
+You're meant to establish which segments and arcs to consider by finding all
+intersections and square points that fit on or in the circle, connect the parts
+of segments interior to the circle using those arcs to build the shape of the
+intersection of their interiors and then do the previously mentioned
+decomposition into sectors and triangles, making sure to use signed area in
+order to deduct negatives correctly.
+
+Generalization to Arbitrary Polygons
+====================================
+
+The answer is yes - this approach generalizes naturally to any polygon, not just
+squares. The boundary-walk algorithm implements exactly this idea:
+
+1. Find all circle-polygon edge intersections
+2. Walk the boundary of the overlap region, which alternates between:
+   - Polygon edge segments (inside circle) -> contribute signed triangular areas
+   - Circle arcs (inside polygon) -> contribute signed sector areas
+3. Sum all contributions using signed areas for correct orientation handling
+
+This works for convex and non-convex polygons alike. The key insight from
+Green's theorem is that area can be computed as a boundary integral, and our
+mixed boundary (part polygon edges, part circle arcs) decomposes cleanly into
+the triangle + sector contributions.
+
+The original square-circle question led to a general solution applicable to any
+polygon shape.

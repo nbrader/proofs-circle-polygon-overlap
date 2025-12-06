@@ -1,23 +1,22 @@
-# proofs-square-circle-overlap
+# circle-polygon-overlap
 
-Formal verification in Rocq (formerly Coq) of the overlap area between a circle
-and a square, plus a general interactive visualization for arbitrary polygon-circle
-overlaps. The project provides case-by-case analysis for squares, a general
-boundary-walk algorithm for polygons, and reference implementations in Haskell
-and Python.
+Compute the overlap area between a circle and arbitrary polygons using a verified
+boundary-walk algorithm. The project provides an interactive visualization for
+any polygon shape, formal verification in Rocq (formerly Coq) for the square-circle
+special case, and reference implementations in Haskell and Python.
 
 ## Problem statement
 
-**Core verification target:** Given a circle of radius R and a square with side
-length 2s (both centered at the origin), compute the area of their intersection.
-The solution requires careful geometric decomposition based on the relationship
-between R and s.
+**General overlap computation:** Given a circle of radius R at position (cx, cy)
+and an arbitrary polygon (convex or non-convex), compute the area of their
+intersection. The boundary-walk algorithm handles all configurations by decomposing
+the overlap region into signed triangles and circular sectors.
 
-**General visualization:** The interactive viewer extends this to arbitrary convex
-and non-convex polygons, computing overlap areas using a boundary-walk algorithm
-that works for any polygon shape and circle position.
+**Square-circle verification:** As a formally verified special case, the project
+includes Rocq proofs for a circle and axis-aligned square (both centered at the
+origin), demonstrating the 8-case geometric decomposition.
 
-## Interactive visualization: `circle-square-overlap.html`
+## Interactive visualization: `circle-polygon-overlap.html`
 
 A fully interactive web application that visualizes polygon-circle overlap in both
 2D and 3D. Simply open the file in a modern web browser—no build step required.
@@ -124,20 +123,21 @@ The general polygon algorithm unifies these cases through the boundary-walk appr
 
 ## Repository layout
 
-- **`circle-square-overlap.html`** – interactive web application for visualizing
+- **`circle-polygon-overlap.html`** – interactive web application for visualizing
   polygon-circle overlap with 2D/3D views, animation, and multiple shape support
 - **`Spec.txt`** – specification of the overlap algorithm, correctness invariants,
   and documented implementation notes
-- **`Rocq/`** – the formal development
-  - `SquareCircleOverlap.v`: definitions of geometric primitives (sectors,
-    triangles, segment areas), the case analysis, and the main area formula
-  - `_CoqProject`: logical load paths (`-Q . SquareCircleOverlap`) and file list
-- **`Haskell/`** – informal reference implementation that mirrors the case analysis
-  for numerical experimentation in GHCi
-- **`Python/`** – quick-running sanity checks that empirically validate the formulas
+- **`ROADMAP.md`** – planned features and development roadmap
+- **`Rocq/`** – formal verification (square-circle special case)
+  - `CirclePolygonOverlap.v`: definitions of geometric primitives (sectors,
+    triangles, segment areas), the 8-case analysis, and the main area formula
+  - `_CoqProject`: logical load paths (`-Q . CirclePolygonOverlap`) and file list
+- **`Haskell/`** – reference implementation for numerical experimentation
+  - `CirclePolygonOverlap.hs`: general polygon overlap calculations
+- **`Python/`** – sanity checks that empirically validate the formulas
   against numerical integration
 - **`Rough/`** – working diagrams and visual aids, including the comprehensive
-  8-case illustration
+  8-case illustration for the square-circle case
 
 ## Building the Rocq proofs
 
@@ -149,18 +149,18 @@ make clean              # remove artifacts
 ```
 
 The project targets Rocq 8.20+ (Coq 8.20+). All files live under the
-`SquareCircleOverlap` namespace as configured in `_CoqProject`.
+`CirclePolygonOverlap` namespace as configured in `_CoqProject`.
 
 ## Haskell quick start
 
 ```bash
 cd Haskell
-ghci SquareCircleOverlap.hs
+ghci CirclePolygonOverlap.hs
 Prelude> overlapArea 1.0 1.5   -- circle radius 1.0, square half-side 1.5
 ```
 
 This implementation is not formally verified but is useful for exploring the
-geometric formulas and generating visualizations.
+geometric formulas and numerical experimentation.
 
 ## Python sanity checks
 
@@ -177,20 +177,30 @@ to ensure correctness before formalizing in Rocq.
 
 ## Current status
 
-- **Interactive visualization (`circle-square-overlap.html`):** Fully functional
+- **Interactive visualization (`circle-polygon-overlap.html`):** Fully functional
   with support for arbitrary polygons, exact geometric tests, and smooth numerical
   behavior across all parameter ranges
-- **Rocq formal proofs (`Rocq/SquareCircleOverlap.v`):** Under active development,
+- **Rocq formal proofs (`Rocq/CirclePolygonOverlap.v`):** Under active development,
   focusing on the 8-case square-circle decomposition
-- **Haskell and Python implementations:** Match the square-specific case analysis
-  and serve as numerical references
+- **Haskell and Python implementations:** Serve as numerical references for
+  validating the geometric formulas
 - **General polygon algorithm:** Implemented and tested in the HTML viewer;
   boundary-walk approach confirmed to handle convex and non-convex shapes correctly
 
 To work on the development interactively, use your preferred Rocq/Coq IDE
 (CoqIDE, VS Code + VsCoq, Proof General), reload
-`Rocq/SquareCircleOverlap.v`, and re-run `make` after edits to ensure the
+`Rocq/CirclePolygonOverlap.v`, and re-run `make` after edits to ensure the
 project compiles.
+
+## Roadmap
+
+See `ROADMAP.md` for the full development roadmap. Key planned features:
+
+- **Multi-polygon support:** Compute overlap with multiple polygons simultaneously
+- **Circle boundary mode:** Calculate perimeter length inside polygons (arc lengths
+  instead of area)
+- **Performance optimizations:** For complex polygons with many vertices
+- **Extended formal verification:** Proofs for additional geometric configurations
 
 ## Recent improvements
 

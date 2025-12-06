@@ -1,3 +1,9 @@
+Circle-Polygon Overlap Algorithm Specification
+==============================================
+
+This specification describes the general boundary-walk algorithm for computing
+the overlap area between a circle and an arbitrary polygon (convex or non-convex).
+
 // Verified: matches implemented overlap logic (polygon fully inside -> polygon triangles; circle fully inside -> full circle primitive; intersection -> alternating lines and arcs, no consecutive arcs, arcs chosen by clockwise circle order and inside-polygon midpoints).
 
 Mathematical Foundation:
@@ -24,3 +30,27 @@ Resolved Issues:
   * No overlap: center outside polygon AND all vertices farther than radius from center
   This eliminates numerical spikes and ensures stable behavior across all radius values.
 - Point 2 (PARTIALLY ADDRESSED): Added exact geometric tests for special cases. Further epsilon tolerance improvements may be needed for general intersection cases.
+
+Planned Enhancements:
+=====================
+
+1. Multi-Polygon Overlap
+   - Input: Array of polygons [P₁, P₂, ..., Pₙ] and circle C
+   - Output: Array of overlap areas [A₁, A₂, ..., Aₙ] for each polygon
+   - Algorithm: Apply boundary-walk independently to each polygon
+   - Future extension: Compute overlap with union of polygon interiors (requires
+     polygon boolean operations to compute ∪Pᵢ first)
+
+2. Circle Boundary Mode (Perimeter Overlap)
+   - Metric: Total arc length of circle perimeter inside polygon interior(s)
+   - Formula: L = Σ θᵢ · R for arc angles θᵢ inside polygon
+   - Algorithm modification:
+     * Find circle-polygon intersections (same as current)
+     * For each arc segment, check if midpoint inside polygon
+     * Sum arc lengths instead of sector areas
+   - Use cases: Perimeter-based measurements, boundary exposure calculations
+
+3. Algorithmic Considerations for Extensions
+   - Multi-polygon: O(n·k) where n = total vertices, k = number of polygons
+   - Boundary mode: Same complexity as area mode, simpler final calculation
+   - Both extensions reuse the core intersection-finding and inside-polygon tests
