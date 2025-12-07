@@ -183,6 +183,225 @@ For circle-polyhedron overlap in 3D:
 - Signed volume = ∫∫∫ (solid_angle / 4π) dV
 - Boundary-walk becomes surface integral over faces
 
+## Inverse Problem: Recovering the Polygon from the Overlap Function
+
+### The Question
+
+**Given the 3D overlap plot A(cx, cy) and the circle radius R, can we recover the original polygon shape?**
+
+This is a **deconvolution problem** in mathematical imaging and signal processing.
+
+### Mathematical Formulation
+
+The overlap function is a convolution:
+```
+A(cx, cy) = (1_P ⋆ 1_C)(cx, cy) = ∫∫ 1_P(u) · 1_C(u - (cx, cy)) du
+```
+
+where:
+- **1_P(u)**: indicator function of the polygon (1 inside, 0 outside)
+- **1_C(u)**: indicator function of the circle of radius R centered at origin
+- **A(cx, cy)**: the measured overlap area when circle is centered at (cx, cy)
+
+**Inverse problem:** Given A(cx, cy) and R (which determines 1_C), recover 1_P.
+
+### Fourier Domain Approach
+
+The **convolution theorem** states:
+```
+ℱ[A] = ℱ[1_P] · ℱ[1_C]
+```
+
+Therefore:
+```
+ℱ[1_P] = ℱ[A] / ℱ[1_C]
+```
+
+Then apply inverse Fourier transform:
+```
+1_P = ℱ⁻¹[ℱ[A] / ℱ[1_C]]
+```
+
+#### Fourier Transform of Circle Indicator
+
+The Fourier transform of 1_C (circle of radius R) is known analytically:
+```
+ℱ[1_C](k_x, k_y) = 2πR · J_1(2π R |k|) / |k|
+```
+
+where:
+- **J_1**: Bessel function of the first kind, order 1
+- **|k| = √(k_x² + k_y²)**: spatial frequency magnitude
+
+This is a **radially symmetric** function that oscillates and decays as |k| increases.
+
+### Challenges and Limitations
+
+#### 1. **Division by Zero (Ill-Posedness)**
+
+The Fourier transform of 1_C has **zeros** at specific frequencies:
+```
+J_1(2π R |k|) = 0  at  |k| = j_{1,n} / (2π R)
+```
+
+where j_{1,n} are the zeros of J_1 (approximately 3.832, 7.016, 10.173, ...).
+
+At these frequencies, ℱ[1_C] = 0, so division is undefined. This makes the problem **ill-posed**.
+
+**Consequence:** The polygon cannot be uniquely recovered from A(cx, cy) alone—there are infinitely many polygons that produce the same (or nearly the same) overlap function.
+
+#### 2. **Noise Sensitivity**
+
+Even away from zeros, ℱ[1_C] becomes very small at high frequencies (due to J_1 decay), so:
+```
+|ℱ[1_P]| = |ℱ[A]| / |ℱ[1_C]|  →  ∞  as |k| → large
+```
+
+Small measurement errors in A(cx, cy) get **amplified exponentially** at high frequencies, leading to unstable reconstructions.
+
+#### 3. **Band-Limiting Effect**
+
+Since ℱ[1_C] decays rapidly, high-frequency components of the polygon (sharp corners, fine details) are **filtered out** by the convolution. The overlap function A(cx, cy) is smoother than the original polygon.
+
+**Analogy:** Imaging through a circular lens—the circle acts as a low-pass filter that blurs fine details.
+
+### When Recovery Is Possible
+
+Despite ill-posedness, recovery can work in practice with **regularization** and **prior knowledge**:
+
+#### 1. **Regularized Deconvolution**
+
+Methods like **Tikhonov regularization** or **Wiener filtering** stabilize the division:
+```
+ℱ[1_P] ≈ ℱ[A] · ℱ[1_C]* / (|ℱ[1_C]|² + λ)
+```
+
+where:
+- **λ > 0**: regularization parameter (controls smoothing vs. fidelity)
+- **ℱ[1_C]***: complex conjugate
+
+This avoids division by zero and suppresses noise amplification.
+
+#### 2. **Polygonal Prior**
+
+If we know the shape is a **polygon** (piecewise linear boundary), we can:
+- Parameterize by vertex positions: **1_P = 1_P(v_1, v_2, ..., v_n)**
+- Optimize vertices to minimize:
+  ```
+  E(v_1, ..., v_n) = ∫∫ |A_measured(cx, cy) - A_computed(cx, cy)|² d(cx, cy)
+  ```
+- Use gradient descent or other optimization methods
+
+This is **model-based reconstruction** and can work well if:
+- Number of vertices is known or bounded
+- Polygon is convex (reduces search space)
+- A(cx, cy) is measured densely enough
+
+#### 3. **Known Symmetries**
+
+If the polygon has **symmetry** (e.g., regular pentagon, square), this reduces degrees of freedom:
+- Square: 1 parameter (side length) + 2 parameters (orientation, center)
+- Regular n-gon: 1 parameter (radius) + rotation
+- Arbitrary convex polygon: 2n parameters (n vertex coordinates)
+
+Symmetry constraints make the inverse problem much easier.
+
+#### 4. **Multiple Radii**
+
+Measuring A_R(cx, cy) for **different circle radii R** provides additional information:
+- Different radii sample different frequency bands of ℱ[1_P]
+- Combining multiple radii can overcome zeros in any single ℱ[1_C]
+- This is analogous to **tomographic reconstruction** with varying probe sizes
+
+### Practical Algorithm for Polygon Recovery
+
+```python
+# Input: A(cx, cy) measured on a grid, circle radius R
+# Output: estimated polygon vertices
+
+1. Fourier transform A(cx, cy):
+   A_hat = FFT2D(A)
+
+2. Compute circle indicator Fourier transform:
+   C_hat(kx, ky) = 2πR * J1(2πR * sqrt(kx² + ky²)) / sqrt(kx² + ky²)
+
+3. Regularized deconvolution:
+   P_hat = A_hat * conj(C_hat) / (abs(C_hat)² + λ)
+
+4. Inverse Fourier transform:
+   P_estimate = IFFT2D(P_hat)
+
+5. Threshold to binary:
+   polygon_indicator = (P_estimate > threshold)
+
+6. Extract boundary contour:
+   vertices = extract_corners(polygon_indicator)
+
+7. Refine using optimization:
+   vertices = optimize(vertices, A_measured)
+```
+
+### Theoretical Result: Uniqueness for Polygons
+
+**Theorem (informal):** If 1_P is the indicator of a **convex polygon** and A(cx, cy) is known **exactly** over all ℝ², then 1_P is **uniquely determined** (up to a set of measure zero).
+
+**Proof sketch:**
+- Polygons have **compact support** and **bounded variation**
+- The convolution with 1_C smooths but preserves total variation up to scaling
+- For convex polygons, support of A(cx, cy) = Minkowski sum of polygon and circle
+- The boundary of this Minkowski sum determines polygon boundary uniquely
+
+**Caveat:** In practice, A(cx, cy) is known only on a finite grid with noise, so uniqueness doesn't guarantee stable reconstruction.
+
+### Connection to Winding Number
+
+The winding number perspective offers an alternative inversion approach:
+
+```
+A(cx, cy) = ∫∫ w_P(u) · 1_C(u - (cx, cy)) du
+```
+
+If we can estimate **w_P(u)** (winding number function of polygon) from A(cx, cy), then:
+- Support of w_P gives polygon interior
+- Discontinuities of w_P give polygon edges
+- Magnitude of w_P reveals overlapping regions
+
+This suggests **edge detection** algorithms:
+```
+∇A(cx, cy) ∝ ∫∫ w_P(u) · ∇1_C(u - (cx, cy)) du
+               ≈ ∫_∂C w_P(u - (cx, cy)) dℓ_u
+```
+
+The gradient of A is high when the circle boundary crosses polygon edges.
+
+### Visualization in Webapp
+
+The webapp could implement a **polygon recovery demo**:
+
+1. **User draws or selects a polygon** → compute exact A(cx, cy) on a grid
+2. **Add noise** to simulate measurement error
+3. **Run deconvolution algorithm** → reconstruct estimated polygon
+4. **Display side-by-side comparison** of original vs. recovered shape
+5. **Vary regularization parameter λ** → show tradeoff between smoothing and fidelity
+6. **Vary grid resolution** → demonstrate how sampling density affects recovery
+
+This would illustrate:
+- When deconvolution works well (simple convex polygons, fine grid, low noise)
+- When it fails (complex shapes, coarse grid, high noise, small radius)
+- Effect of regularization on reconstruction quality
+
+### Applications Beyond This Webapp
+
+This inverse problem arises in:
+
+1. **Microscopy:** Recover cell/particle shapes from defocused images (point spread function = circle)
+2. **Geophysics:** Infer subsurface structure from gravitational/magnetic field measurements
+3. **Robotics:** Estimate obstacle shapes from range sensor sweeps
+4. **Materials science:** Determine grain boundaries from diffraction patterns
+5. **Computer vision:** Shape-from-silhouette with circular camera aperture
+
+The circle-polygon overlap provides a **simplified model** for understanding these more complex inverse problems.
+
 ## Implementation Recommendations
 
 ### Near-term (Current Webapp)
