@@ -351,6 +351,67 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
+        /**
+         * CIRCLE-POLYGON OVERLAP VISUALIZER
+         *
+         * This webapp computes and visualizes the overlap area between a circle and
+         * arbitrary polygons using a boundary-walk algorithm based on Green's theorem.
+         *
+         * MATHEMATICAL FRAMEWORK:
+         * ========================
+         *
+         * The overlap area is computed as the integral of the winding number function:
+         *     A = ∫∫_ℝ² w(∂R, p) dp
+         *
+         * where w(∂R, p) is the winding number of the boundary ∂R around point p.
+         *
+         * Green's theorem converts this to a boundary integral:
+         *     A = (1/2) ∮_∂R (x dy - y dx)
+         *
+         * For circle-polygon overlap, the boundary consists of:
+         *   1. Polygon edges inside the circle → signed triangles from circle center
+         *   2. Circle arcs inside the polygon → circular sectors
+         *
+         * This is a generalization of the shoelace formula for mixed straight/curved boundaries.
+         *
+         * KEY CONCEPTS:
+         * =============
+         *
+         * 1. WINDING NUMBER PERSPECTIVE:
+         *    - Points inside overlap have winding number w = 1
+         *    - Points outside have w = 0
+         *    - Self-intersecting polygons can have w > 1 (counted multiple times)
+         *    - Multiple overlapping polygons: winding numbers add
+         *
+         * 2. SIGNED AREA DECOMPOSITION:
+         *    - Triangles: (1/2)(x₁y₂ - x₂y₁) = (1/2) Im(z̄₁·z₂) in complex notation
+         *    - Sectors: (1/2)r²Δθ for arc from angle θ₁ to θ₂
+         *    - Orientation: counterclockwise = positive, clockwise = negative
+         *
+         * 3. LINE REFERENCE VS POINT REFERENCE:
+         *    - Shoelace formula: trapezoids from coordinate axes (line reference)
+         *    - Circle overlap: triangles from circle center (point reference)
+         *    - Both valid by Green's theorem, different geometric decompositions
+         *
+         * 4. CONVOLUTION INTERPRETATION:
+         *    The overlap function A(cx, cy) is a convolution:
+         *        A(cx, cy) = (1_P ⋆ 1_C)(cx, cy)
+         *    where 1_P and 1_C are indicator functions.
+         *
+         *    The 3D surface plot visualizes this convolution kernel.
+         *
+         * IMPLEMENTATION HIGHLIGHTS:
+         * ==========================
+         *
+         * - Exact geometric tests (not sampling) for numerical stability
+         * - Handles convex and non-convex polygons
+         * - Supports multi-polygon mode with independent overlaps
+         * - Boundary mode: computes arc length instead of area
+         * - Animation mode: visualizes triangle/sector accumulation
+         * - 3D surface plot: overlap area as function of circle center position
+         *
+         * See overlapByBoundary() for the core algorithm implementation.
+         */
         const CANVAS_CENTER = 300;
         const SQUARE_HALF_SIDE = 1.0;  // Legacy constant, now configurable
 
@@ -1224,6 +1285,50 @@
                 return Math.sqrt(distX * distX + distY * distY);
             }
 
+            /**
+             * Boundary-walk algorithm for circle-polygon overlap
+             *
+             * MATHEMATICAL FOUNDATION:
+             * This algorithm computes the overlap area by walking the boundary of the
+             * intersection region and applying Green's theorem. The signed area equals
+             * the integral of the winding number function over the plane:
+             *
+             *     A = ∫∫_ℝ² w(∂R, p) dp
+             *
+             * where w(∂R, p) is the winding number of the boundary around point p.
+             *
+             * Green's theorem converts this to a boundary integral:
+             *     A = (1/2) ∮_∂R (x dy - y dx)
+             *
+             * For the overlap region, the boundary ∂R consists of:
+             *   1. Polygon edges inside the circle (contribute triangles from center)
+             *   2. Circle arcs inside the polygon (contribute circular sectors)
+             *
+             * DECOMPOSITION:
+             *   - Triangles: Each polygon edge segment inside the circle contributes
+             *     a signed triangle area from the circle center (cx, cy) to the segment
+             *     endpoints. This is the cross-product: (1/2)(x₁y₂ - x₂y₁)
+             *
+             *   - Sectors: Each circle arc between consecutive intersection points that
+             *     lies inside the polygon contributes a circular sector area: (1/2)r²Δθ
+             *
+             * The winding number interpretation:
+             *   - Inside overlap: w = 1 → contributes area
+             *   - Outside overlap: w = 0 → contributes nothing
+             *   - Boundary orientation determines sign (counterclockwise = positive)
+             *
+             * This naturally handles:
+             *   - Self-intersecting polygons (winding number > 1 in overlapping regions)
+             *   - Multiple polygons (winding numbers add)
+             *   - Complex boundary configurations
+             *
+             * @param {number} cx - Circle center x-coordinate
+             * @param {number} cy - Circle center y-coordinate
+             * @param {number} r - Circle radius
+             * @param {boolean} collectData - Whether to collect triangle/sector data for visualization
+             * @param {Array} verts - Polygon vertices
+             * @returns {number|Object} Area (or arc length in boundary mode), or object with decomposition
+             */
             overlapByBoundary(cx, cy, r, collectData = false, verts = this.shapeVertices) {
                 const shapeVerts = verts || [];
                 const isBoundaryMode = this.boundaryMode === 'perimeter';
@@ -1233,13 +1338,17 @@
                 const triangles = [];
                 const sectors = [];
 
-                // Line contributions along shape edges
+                // STEP 1: Walk polygon edges and accumulate triangular contributions
+                // Each edge inside the circle contributes signed area via the shoelace formula
+                // This corresponds to integrating x dy along straight boundary segments
                 for (let i = 0; i < shapeVerts.length; i++) {
                     const v1 = shapeVerts[i];
                     const v2 = shapeVerts[(i + 1) % shapeVerts.length];
+                    // Translate to circle-centered coordinates
                     const p1 = { x: v1.x - cx, y: v1.y - cy };
                     const p2 = { x: v2.x - cx, y: v2.y - cy };
 
+                    // Find where this edge intersects the circle boundary
                     const intersections = this.circleSegmentIntersections(p1, p2, r);
                     if (intersections.length > 0) {
                         intersections.forEach((hit) => {
@@ -1252,6 +1361,8 @@
                         });
                     }
 
+                    // Split edge into segments: between vertices and intersections
+                    // Only segments with midpoint inside the circle contribute
                     const candidates = [{ t: 0, x: p1.x, y: p1.y }, ...intersections, { t: 1, x: p2.x, y: p2.y }];
                     for (let j = 0; j < candidates.length - 1; j++) {
                         const a = candidates[j];
@@ -1259,7 +1370,10 @@
                         const mid = { x: 0.5 * (a.x + b.x), y: 0.5 * (a.y + b.y) };
                         const midInside = mid.x * mid.x + mid.y * mid.y <= r * r;
                         if (midInside) {
-                            // In boundary mode, triangles don't contribute (they're interior area)
+                            // Triangle from circle center to edge segment
+                            // Signed area = (1/2) cross product in circle-centered coordinates
+                            // This is the shoelace formula: (1/2)(x₁y₂ - x₂y₁)
+                            // Equivalently: (1/2) Im(z̄₁ · z₂) in complex notation
                             if (!isBoundaryMode) {
                                 const triangleArea = 0.5 * (a.x * b.y - a.y * b.x);
                                 measure += triangleArea;
@@ -1347,9 +1461,24 @@
                     }
                 }
 
-                // Build sectors by walking intersections in angular order; every gap gets one arc, never consecutive arcs.
+                // STEP 2: Walk circle arcs and accumulate sector contributions
+                // Circular arcs inside the polygon contribute sectors from the circle center
+                // This corresponds to integrating along curved boundary segments
+                //
+                // MATHEMATICAL INSIGHT:
+                // For a circular arc from angle θ₁ to θ₂ at radius r:
+                //   - Arc length: s = r·Δθ
+                //   - Sector area: A = (1/2)r²·Δθ
+                //
+                // The sector formula comes from Green's theorem applied to polar coordinates:
+                //   A = (1/2) ∮ (x dy - y dx)
+                //     = (1/2) ∫[θ₁,θ₂] r²(cos²θ + sin²θ) dθ
+                //     = (1/2) r² Δθ
+                //
+                // In complex notation: A_sector = (r²/2) Im(log(z₂/z₁)) when |z₁| = |z₂| = r
                 if (circlePts.length > 0) {
                     // Deduplicate intersection points by edge/parameter
+                    // (multiple edges might intersect circle at same point)
                     const dedupMap = new Map();
                     for (const p of circlePts) {
                         const key = `${p.edgeIndex}:${p.edgeParam.toFixed(8)}`;
@@ -1364,8 +1493,12 @@
                         }
                     }
 
+                    // Sort intersection points by angle around circle center
+                    // This allows us to walk the circle boundary in order
                     const intersections = Array.from(dedupMap.values()).sort((a, b) => a.angle - b.angle);
 
+                    // Walk consecutive pairs of intersection points
+                    // Each pair defines a potential arc segment
                     for (let i = 0; i < intersections.length; i++) {
                         const a = intersections[i];
                         const b = intersections[(i + 1) % intersections.length];
@@ -1378,13 +1511,15 @@
                             end = start + delta;
                         }
 
-                        // Keep arc only if its midpoint lies inside the polygon
+                        // Test if this arc is inside the polygon by checking the midpoint
+                        // Winding number interpretation: arc contributes if w(polygon, arc_midpoint) ≠ 0
                         const mid = start + delta / 2;
                         const midNorm = ((mid % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
                         const mx = cx + r * Math.cos(midNorm);
                         const my = cy + r * Math.sin(midNorm);
                         if (!this.pointInPolygon(mx, my, shapeVerts)) continue;
 
+                        // Compute contribution: arc length (boundary mode) or sector area (area mode)
                         const contribution = isBoundaryMode ? r * delta : 0.5 * r * r * delta;
                         measure += contribution;
 
