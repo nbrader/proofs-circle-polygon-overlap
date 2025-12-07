@@ -119,6 +119,71 @@
             max-height: 150px;
             overflow-y: auto;
         }
+        .polygon-panel {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        .polygon-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .polygon-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #fafafa;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .polygon-item.active {
+            border-color: #2196F3;
+            background: #E3F2FD;
+        }
+        .polygon-item .color-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 1px solid #888;
+            display: inline-block;
+        }
+        .polygon-item .remove-btn {
+            border: none;
+            background: transparent;
+            color: #777;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .polygon-item .remove-btn:hover {
+            color: #c00;
+        }
+        .polygon-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px;
+        }
+        .polygon-stat-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 8px 10px;
+            background: #fafafa;
+            font-size: 13px;
+        }
+        .polygon-stat-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .metric-note {
+            font-size: 12px;
+            color: #555;
+        }
     </style>
 </head>
 <body>
@@ -210,6 +275,13 @@
                 <input type="checkbox" id="showDebug">
             </div>
             <div class="control-group">
+                <label for="boundaryMode">Calculation Mode:</label>
+                <select id="boundaryMode">
+                    <option value="area">Interior Area</option>
+                    <option value="perimeter">Boundary Length (Arc inside polygon)</option>
+                </select>
+            </div>
+            <div class="control-group">
                 <button id="drawPolygonBtn" style="padding: 8px 16px; font-size: 14px; cursor: pointer;">
                     🖊️ Draw Custom Polygon
                 </button>
@@ -225,6 +297,14 @@
                     ANIMATING...
                 </span>
             </div>
+            <div class="control-group polygon-panel">
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <strong>Polygon List</strong>
+                    <button id="addPolygonBtn" style="padding: 6px 12px; cursor: pointer;">➕ Add Polygon</button>
+                </div>
+                <div class="polygon-list" id="polygonList"></div>
+                <div class="metric-note">Use the shape controls to edit the highlighted polygon. Add saves a new polygon with its own color.</div>
+            </div>
         </div>
 
         <div class="case-indicator" id="caseIndicator">Domain: -</div>
@@ -236,18 +316,22 @@
                     <span class="info-value" id="circlePos">(0.00, 0.00)</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Overlap Area:</span>
+                    <span class="info-label" id="overlapLabel">Total Overlap Area:</span>
                     <span class="info-value" id="overlapArea">0.000</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Circle Area:</span>
+                    <span class="info-label" id="circleMeasureLabel">Circle Area:</span>
                     <span class="info-value" id="circleArea">0.000</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Overlap %:</span>
+                    <span class="info-label" id="overlapPercentLabel">Overlap %:</span>
                     <span class="info-value" id="overlapPercent">0%</span>
                 </div>
             </div>
+        </div>
+        <div class="info" id="polygonStatsContainer" style="display:none;">
+            <h2 style="margin-top:0;">Per-Polygon Metrics</h2>
+            <div id="polygonStats" class="polygon-stats"></div>
         </div>
 
         <div class="debug" id="debugInfo" style="display:none;"></div>
@@ -289,6 +373,9 @@
                 this.resolution = 120;
                 this.currentCase = '';
                 this.debugText = '';
+                this.colorPalette = ['#4CAF50', '#2196F3', '#FF5722', '#9C27B0', '#009688', '#795548', '#3F51B5', '#8BC34A'];
+                this.polygons = [];
+                this.activePolygonIndex = 0;
 
                 // Animation state
                 this.isAnimating = false;
@@ -308,7 +395,11 @@
                 this.customVertices = [[-1,-1],[1,-1],[1,1],[-1,1]];
                 this.shapeVertices = [];
 
+                // Calculation mode: 'area' for interior overlap, 'perimeter' for arc length inside polygon
+                this.boundaryMode = 'area';
+
                 this.updateShapeVertices();
+                this.initializePolygonList();
                 this.setupControls();
                 this.updateShapeControls();  // Initialize control visibility
                 this.setup2DCanvas();
@@ -463,6 +554,15 @@
                     document.getElementById('debugInfo').style.display = e.target.checked ? 'block' : 'none';
                 });
 
+                // Boundary mode selector
+                document.getElementById('boundaryMode').addEventListener('change', (e) => {
+                    this.pauseAnimationForParamChange();
+                    this.boundaryMode = e.target.value;
+                    this.updateDisplay();
+                    this.update3DSurface();
+                    this.scheduleAnimationRestart();
+                });
+
                 document.getElementById('autoRotate').addEventListener('change', (e) => {
                     if (this.controls) {
                         this.controls.autoRotate = e.target.checked;
@@ -489,6 +589,12 @@
                     }
                     this.updateDisplay();
                     this.scheduleAnimationRestart();
+                });
+
+                // Polygon list actions
+                document.getElementById('addPolygonBtn').addEventListener('click', () => {
+                    this.pauseAnimationForParamChange();
+                    this.addPolygonFromCurrent();
                 });
 
                 // Animation button
@@ -609,6 +715,7 @@
 
                 // Enforce consistent counter-clockwise orientation for positive signed areas
                 this.ensureCounterClockwise();
+                this.updateActivePolygonRecord();
             }
 
             polygonSignedArea(vertices) {
@@ -625,6 +732,152 @@
                 if (this.polygonSignedArea(this.shapeVertices) < 0) {
                     this.shapeVertices.reverse();
                 }
+            }
+
+            colorWithAlpha(color, alpha) {
+                if (color && color.startsWith('#') && color.length === 7) {
+                    const r = parseInt(color.slice(1, 3), 16);
+                    const g = parseInt(color.slice(3, 5), 16);
+                    const b = parseInt(color.slice(5, 7), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                }
+                return color;
+            }
+
+            initializePolygonList() {
+                const initial = this.buildPolygonState('Polygon 1', this.colorPalette[0]);
+                this.polygons.push(initial);
+                this.activePolygonIndex = 0;
+                this.renderPolygonList();
+            }
+
+            buildPolygonState(name, color) {
+                return {
+                    id: Date.now() + Math.random(),
+                    name,
+                    color,
+                    shapeType: this.shapeType,
+                    squareSize: this.squareSize,
+                    rectWidth: this.rectWidth,
+                    rectHeight: this.rectHeight,
+                    polyRadius: this.polyRadius,
+                    customVertices: JSON.parse(JSON.stringify(this.customVertices)),
+                    vertices: this.shapeVertices.map(v => ({ x: v.x, y: v.y }))
+                };
+            }
+
+            renderPolygonList() {
+                const list = document.getElementById('polygonList');
+                if (!list) return;
+                list.innerHTML = '';
+
+                this.polygons.forEach((poly, idx) => {
+                    const item = document.createElement('div');
+                    item.className = `polygon-item ${idx === this.activePolygonIndex ? 'active' : ''}`;
+
+                    const colorDot = document.createElement('span');
+                    colorDot.className = 'color-dot';
+                    colorDot.style.background = poly.color;
+
+                    const label = document.createElement('span');
+                    label.textContent = `${poly.name} (${poly.shapeType})`;
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-btn';
+                    removeBtn.textContent = '✖';
+                    removeBtn.title = 'Remove polygon';
+                    removeBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.removePolygon(idx);
+                    });
+
+                    item.appendChild(colorDot);
+                    item.appendChild(label);
+                    if (this.polygons.length > 1) {
+                        item.appendChild(removeBtn);
+                    }
+                    item.addEventListener('click', () => this.setActivePolygon(idx));
+
+                    list.appendChild(item);
+                });
+            }
+
+            setActivePolygon(index) {
+                if (index < 0 || index >= this.polygons.length) return;
+                this.pauseAnimationForParamChange();
+                this.activePolygonIndex = index;
+                const poly = this.polygons[index];
+
+                // Sync controls to polygon params
+                this.shapeType = poly.shapeType;
+                this.squareSize = poly.squareSize;
+                this.rectWidth = poly.rectWidth;
+                this.rectHeight = poly.rectHeight;
+                this.polyRadius = poly.polyRadius;
+                this.customVertices = JSON.parse(JSON.stringify(poly.customVertices));
+                this.shapeVertices = poly.vertices.map(v => ({ x: v.x, y: v.y }));
+
+                // Update control UI values
+                document.getElementById('shapeType').value = this.shapeType;
+                document.getElementById('squareSize').value = this.squareSize;
+                document.getElementById('squareSizeValue').textContent = this.squareSize.toFixed(2);
+                document.getElementById('rectWidth').value = this.rectWidth;
+                document.getElementById('rectWidthValue').textContent = this.rectWidth.toFixed(2);
+                document.getElementById('rectHeight').value = this.rectHeight;
+                document.getElementById('rectHeightValue').textContent = this.rectHeight.toFixed(2);
+                document.getElementById('polyRadius').value = this.polyRadius;
+                document.getElementById('polyRadiusValue').textContent = this.polyRadius.toFixed(2);
+                document.getElementById('customVertices').value = JSON.stringify(this.customVertices);
+
+                this.updateShapeControls();
+                this.updateDisplay();
+                this.update3DSurface();
+                this.renderPolygonList();
+                this.scheduleAnimationRestart();
+            }
+
+            addPolygonFromCurrent() {
+                const name = `Polygon ${this.polygons.length + 1}`;
+                const color = this.colorPalette[this.polygons.length % this.colorPalette.length];
+                const newPoly = this.buildPolygonState(name, color);
+                this.polygons.push(newPoly);
+                this.setActivePolygon(this.polygons.length - 1);
+                this.renderPolygonList();
+            }
+
+            removePolygon(index) {
+                if (this.polygons.length <= 1) return;
+                this.polygons.splice(index, 1);
+                if (this.activePolygonIndex >= this.polygons.length) {
+                    this.activePolygonIndex = this.polygons.length - 1;
+                }
+                const active = this.polygons[this.activePolygonIndex];
+                // Re-sync to active polygon after removal
+                this.shapeType = active.shapeType;
+                this.squareSize = active.squareSize;
+                this.rectWidth = active.rectWidth;
+                this.rectHeight = active.rectHeight;
+                this.polyRadius = active.polyRadius;
+                this.customVertices = JSON.parse(JSON.stringify(active.customVertices));
+                this.shapeVertices = active.vertices.map(v => ({ x: v.x, y: v.y }));
+                this.renderPolygonList();
+                this.updateShapeControls();
+                this.updateDisplay();
+                this.update3DSurface();
+                this.scheduleAnimationRestart();
+            }
+
+            updateActivePolygonRecord() {
+                if (!this.polygons[this.activePolygonIndex]) return;
+                const poly = this.polygons[this.activePolygonIndex];
+                poly.shapeType = this.shapeType;
+                poly.squareSize = this.squareSize;
+                poly.rectWidth = this.rectWidth;
+                poly.rectHeight = this.rectHeight;
+                poly.polyRadius = this.polyRadius;
+                poly.customVertices = JSON.parse(JSON.stringify(this.customVertices));
+                poly.vertices = this.shapeVertices.map(v => ({ x: v.x, y: v.y }));
+                this.renderPolygonList();
             }
 
             finishPolygonDrawing() {
@@ -917,12 +1170,12 @@
             }
 
             // Check if a point is inside the polygon using ray casting algorithm
-            pointInPolygon(x, y) {
-                const verts = this.shapeVertices;
+            pointInPolygon(x, y, verts = this.shapeVertices) {
+                const vertices = verts || [];
                 let inside = false;
-                for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
-                    const xi = verts[i].x, yi = verts[i].y;
-                    const xj = verts[j].x, yj = verts[j].y;
+                for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+                    const xi = vertices[i].x, yi = vertices[i].y;
+                    const xj = vertices[j].x, yj = vertices[j].y;
 
                     const intersect = ((yi > y) !== (yj > y))
                         && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
@@ -971,11 +1224,12 @@
                 return Math.sqrt(distX * distX + distY * distY);
             }
 
-            overlapByBoundary(cx, cy, r, collectData = false) {
-                const shapeVerts = this.shapeVertices;
+            overlapByBoundary(cx, cy, r, collectData = false, verts = this.shapeVertices) {
+                const shapeVerts = verts || [];
+                const isBoundaryMode = this.boundaryMode === 'perimeter';
 
                 const circlePts = [];
-                let area = 0;
+                let measure = 0;  // area or arc length depending on mode
                 const triangles = [];
                 const sectors = [];
 
@@ -1005,18 +1259,21 @@
                         const mid = { x: 0.5 * (a.x + b.x), y: 0.5 * (a.y + b.y) };
                         const midInside = mid.x * mid.x + mid.y * mid.y <= r * r;
                         if (midInside) {
-                            const triangleArea = 0.5 * (a.x * b.y - a.y * b.x);
-                            area += triangleArea;
-                            if (collectData) {
-                                triangles.push({
-                                    p1: { x: cx, y: cy },
-                                    p2: { x: a.x + cx, y: a.y + cy },
-                                    p3: { x: b.x + cx, y: b.y + cy },
-                                    area: triangleArea,
-                                    edgeIndex: i,
-                                    edgeParam: a.t,      // Start position
-                                    edgeParamEnd: b.t    // End position
-                                });
+                            // In boundary mode, triangles don't contribute (they're interior area)
+                            if (!isBoundaryMode) {
+                                const triangleArea = 0.5 * (a.x * b.y - a.y * b.x);
+                                measure += triangleArea;
+                                if (collectData) {
+                                    triangles.push({
+                                        p1: { x: cx, y: cy },
+                                        p2: { x: a.x + cx, y: a.y + cy },
+                                        p3: { x: b.x + cx, y: b.y + cy },
+                                        value: triangleArea,
+                                        edgeIndex: i,
+                                        edgeParam: a.t,      // Start position
+                                        edgeParamEnd: b.t    // End position
+                                    });
+                                }
                             }
                         }
                     }
@@ -1029,12 +1286,15 @@
                     return dx * dx + dy * dy <= r * r + 1e-9;
                 });
                 if (allVertsInside && circlePts.length === 0) {
-                    return collectData ? { area, triangles, sectors: [] } : area;
+                    if (collectData) {
+                        return { value: isBoundaryMode ? 0 : measure, triangles: isBoundaryMode ? [] : triangles, sectors: [] };
+                    }
+                    return isBoundaryMode ? 0 : measure;
                 }
 
                 // Special case: no overlap
                 // Exact test: center outside polygon AND all vertices farther than radius from center
-                if (!this.pointInPolygon(cx, cy)) {
+                if (!this.pointInPolygon(cx, cy, shapeVerts)) {
                     let noOverlap = true;
                     for (const v of shapeVerts) {
                         const dx = v.x - cx;
@@ -1057,14 +1317,14 @@
                             }
                         }
                         if (noOverlap) {
-                            return collectData ? { area: 0, triangles: [], sectors: [] } : 0;
+                            return collectData ? { value: 0, triangles: [], sectors: [] } : 0;
                         }
                     }
                 }
 
                 // Special case: circle fully inside polygon
                 // Exact test: center inside polygon AND all edges farther than radius from center
-                if (triangles.length === 0 && this.pointInPolygon(cx, cy)) {
+                if (!isBoundaryMode && triangles.length === 0 && this.pointInPolygon(cx, cy, shapeVerts)) {
                     let circleFullyInside = true;
                     for (let i = 0; i < shapeVerts.length; i++) {
                         const v1 = shapeVerts[i];
@@ -1076,13 +1336,14 @@
                         }
                     }
                     if (circleFullyInside) {
+                        const fullArea = Math.PI * r * r;
                         if (collectData) {
-                            return { area: Math.PI * r * r, triangles: [], sectors: [{
-                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, area: Math.PI * r * r,
+                            return { value: fullArea, triangles: [], sectors: [{
+                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, value: fullArea,
                                 fromEdge: 0, fromParam: 0, toEdge: 0, toParam: 0
                             }] };
                         }
-                        return Math.PI * r * r;
+                        return fullArea;
                     }
                 }
 
@@ -1122,17 +1383,17 @@
                         const midNorm = ((mid % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
                         const mx = cx + r * Math.cos(midNorm);
                         const my = cy + r * Math.sin(midNorm);
-                        if (!this.pointInPolygon(mx, my)) continue;
+                        if (!this.pointInPolygon(mx, my, shapeVerts)) continue;
 
-                        const sectorArea = 0.5 * r * r * delta;
-                        area += sectorArea;
+                        const contribution = isBoundaryMode ? r * delta : 0.5 * r * r * delta;
+                        measure += contribution;
 
                         if (collectData) {
                             sectors.push({
                                 cx, cy, r,
                                 startAngle: start,
                                 endAngle: end,
-                                area: sectorArea,
+                                value: contribution,
                                 fromEdge: a.edge,
                                 fromParam: a.param,
                                 toEdge: b.edge,
@@ -1140,24 +1401,36 @@
                             });
                         }
                     }
+                } else if (collectData && isBoundaryMode && this.pointInPolygon(cx, cy, shapeVerts)) {
+                    // Circle fully inside polygon with no intersections in boundary mode: full circumference.
+                    const fullLength = 2 * Math.PI * r;
+                    measure = fullLength;
+                    sectors.push({
+                        cx, cy, r,
+                        startAngle: 0,
+                        endAngle: 2 * Math.PI,
+                        value: fullLength,
+                        fromEdge: 0, fromParam: 0, toEdge: 0, toParam: 0
+                    });
+                } else if (isBoundaryMode && this.pointInPolygon(cx, cy, shapeVerts) && measure === 0) {
+                    // Circle fully inside polygon without collectData
+                    return 2 * Math.PI * r;
                 }
 
-                // Return signed area (should be positive if boundary walk is correct)
-                // Per IDEA.txt: "use signed area in order to deduct negatives correctly"
                 if (collectData) {
-                    return { area, triangles, sectors };
+                    return { value: measure, triangles, sectors };
                 }
-                return area;
+                return measure;
             }
 
             // Classify the domain for arbitrary shapes
-            classifyDomain(cx, cy, R) {
-                const centerInside = this.pointInPolygon(cx, cy);
+            classifyDomain(cx, cy, R, verts = this.shapeVertices) {
+                const centerInside = this.pointInPolygon(cx, cy, verts);
 
                 // Find vertices inside circle
                 const verticesInCircle = [];
-                for (let i = 0; i < this.shapeVertices.length; i++) {
-                    const v = this.shapeVertices[i];
+                for (let i = 0; i < verts.length; i++) {
+                    const v = verts[i];
                     const dist = Math.sqrt((v.x - cx) * (v.x - cx) + (v.y - cy) * (v.y - cy));
                     if (dist <= R) {
                         verticesInCircle.push(i);
@@ -1166,9 +1439,9 @@
 
                 // Find edges that intersect circle
                 const edgesIntersecting = [];
-                for (let i = 0; i < this.shapeVertices.length; i++) {
-                    const v1 = this.shapeVertices[i];
-                    const v2 = this.shapeVertices[(i + 1) % this.shapeVertices.length];
+                for (let i = 0; i < verts.length; i++) {
+                    const v1 = verts[i];
+                    const v2 = verts[(i + 1) % verts.length];
                     const p1 = { x: v1.x - cx, y: v1.y - cy };
                     const p2 = { x: v2.x - cx, y: v2.y - cy };
                     const intersections = this.circleSegmentIntersections(p1, p2, R);
@@ -1222,24 +1495,30 @@
             // calculateOverlap returns the overlap kernel A(cx, cy):
             // the area of intersection between the shape and a circle centered at (cx, cy).
             // Both the 2D view (dragging) and 3D surface plot just sample this kernel.
-            calculateOverlap(cx, cy, R) {
-                this.debugText = `cx=${cx.toFixed(3)}, cy=${cy.toFixed(3)}, R=${R.toFixed(3)}\n`;
+            calculateOverlap(cx, cy, R, verts = this.shapeVertices, shapeType = this.shapeType, options = {}) {
+                const { collectData = false, recordDebug = true, shapeMeta = null } = options;
+
+                if (recordDebug) {
+                    this.debugText = `cx=${cx.toFixed(3)}, cy=${cy.toFixed(3)}, R=${R.toFixed(3)}\n`;
+                }
 
                 // Classify domain for all shapes
-                const domain = this.classifyDomain(cx, cy, R);
-                this.currentCase = domain.type;
-                this.currentDomain = domain;
-                this.debugText += `Domain: ${domain.type}\n`;
-                this.debugText += `Description: ${domain.description}\n`;
-                this.debugText += `Center inside: ${domain.centerInside}\n`;
-                this.debugText += `Vertices in circle: [${domain.verticesInCircle.join(', ')}]\n`;
-                this.debugText += `Edges intersecting: [${domain.edgesIntersecting.join(', ')}]\n`;
+                const domain = this.classifyDomain(cx, cy, R, verts);
+                if (recordDebug) {
+                    this.currentCase = domain.type;
+                    this.currentDomain = domain;
+                    this.debugText += `Domain: ${domain.type}\n`;
+                    this.debugText += `Description: ${domain.description}\n`;
+                    this.debugText += `Center inside: ${domain.centerInside}\n`;
+                    this.debugText += `Vertices in circle: [${domain.verticesInCircle.join(', ')}]\n`;
+                    this.debugText += `Edges intersecting: [${domain.edgesIntersecting.join(', ')}]\n`;
+                }
 
                 // For square shapes, also compute legacy case classification
-                if (this.shapeType === 'square') {
+                if (shapeType === 'square' && recordDebug) {
                     const ax = Math.abs(cx);
                     const ay = Math.abs(cy);
-                    const s = this.squareSize;
+                    const s = shapeMeta?.squareSize ?? this.squareSize;
                     const dx = Math.max(0, ax - s);
                     const dy = Math.max(0, ay - s);
                     const distToNearestCorner = Math.sqrt((ax - s) * (ax - s) + (ay - s) * (ay - s));
@@ -1298,7 +1577,7 @@
                     this.debugText += `Legacy case: ${caseType}\n`;
                 }
 
-                return this.overlapByBoundary(cx, cy, R);
+                return this.overlapByBoundary(cx, cy, R, collectData, verts);
             }
 
             update3DSurface() {
@@ -1321,13 +1600,25 @@
                         const x = vertices[idx];        // Red axis - input
                         const z = vertices[idx + 1];    // Blue axis - input (read before overwrite)
 
-                        const overlap = this.calculateOverlap(x, -z, this.R);
+                        let overlap = 0;
+                        for (const poly of this.polygons) {
+                            overlap += this.calculateOverlap(
+                                x,
+                                -z,
+                                this.R,
+                                poly.vertices,
+                                poly.shapeType,
+                                { recordDebug: false, shapeMeta: poly }
+                            );
+                        }
 
-                        const circleArea = Math.PI * this.R * this.R;
+                        const circleMeasure = this.boundaryMode === 'perimeter'
+                            ? 2 * Math.PI * this.R
+                            : Math.PI * this.R * this.R;
 
-                        // Normalize height to circle area so it stays in view
-                        vertices[idx + 1] = overlap / circleArea;  // Green - height (normalized)
-                        vertices[idx + 2] = z;                   // Blue - input
+                        // Normalize height to circle measure so it stays in view
+                        vertices[idx + 1] = overlap / circleMeasure;  // Green - height (normalized)
+                        vertices[idx + 2] = z;                        // Blue - input
                     }
                 }
 
@@ -1384,6 +1675,7 @@
                 ctx.clearRect(0, 0, 600, 600);
 
                 const showGrid = document.getElementById('showGrid').checked;
+                const activePoly = this.polygons[this.activePolygonIndex];
 
                 // Grid
                 if (showGrid) {
@@ -1416,36 +1708,22 @@
                 ctx.lineTo(600, origin.y);
                 ctx.stroke();
 
-                // Draw domain/case regions if enabled (before shape so shape is on top)
-                if (document.getElementById('showRegions').checked) {
-                    if (this.shapeType === 'square') {
-                        // For squares, show legacy case regions
+                // Draw domain/case regions for active polygon only (before shapes so shapes are on top)
+                if (document.getElementById('showRegions').checked && activePoly) {
+                    this.shapeType = activePoly.shapeType;
+                    this.shapeVertices = activePoly.vertices.map(v => ({ x: v.x, y: v.y }));
+                    if (activePoly.shapeType === 'square') {
+                        this.squareSize = activePoly.squareSize;
                         this.drawCaseRegions();
                     } else {
-                        // For other shapes, show domain regions
                         this.drawDomainRegions();
                     }
                 }
 
-                // Draw the selected shape
-                if (this.shapeVertices.length > 0) {
-                    ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
-                    ctx.strokeStyle = '#4CAF50';
-                    ctx.lineWidth = 3;
-
-                    ctx.beginPath();
-                    const firstPixel = this.worldToPixel(this.shapeVertices[0].x, this.shapeVertices[0].y);
-                    ctx.moveTo(firstPixel.x, firstPixel.y);
-
-                    for (let i = 1; i < this.shapeVertices.length; i++) {
-                        const pixel = this.worldToPixel(this.shapeVertices[i].x, this.shapeVertices[i].y);
-                        ctx.lineTo(pixel.x, pixel.y);
-                    }
-
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.stroke();
-                }
+                // Draw all polygons
+                this.polygons.forEach((poly, idx) => {
+                    this.drawPolygonShape(ctx, poly, idx === this.activePolygonIndex);
+                });
 
                 // Circle
                 const circleCenter = this.worldToPixel(this.cx, this.cy);
@@ -1459,8 +1737,8 @@
                 ctx.fill();
                 ctx.stroke();
 
-                // Draw overlap region
-                this.drawOverlapRegion();
+                // Draw overlap region(s)
+                this.drawOverlapRegions();
 
                 // Draw animated components if active
                 this.drawAnimatedComponents();
@@ -1508,6 +1786,30 @@
                     ctx.fillStyle = '#FF5722';
                     ctx.fillText(`Vertices: ${this.polygonVertices.length}`, 10, 65);
                 }
+            }
+
+            drawPolygonShape(ctx, poly, isActive) {
+                if (!poly || !poly.vertices || poly.vertices.length === 0) return;
+                const fill = this.colorWithAlpha(poly.color, 0.18);
+                const stroke = poly.color;
+                ctx.fillStyle = fill;
+                ctx.strokeStyle = stroke;
+                ctx.lineWidth = isActive ? 3 : 2;
+                ctx.setLineDash(isActive ? [] : [4, 4]);
+
+                ctx.beginPath();
+                const firstPixel = this.worldToPixel(poly.vertices[0].x, poly.vertices[0].y);
+                ctx.moveTo(firstPixel.x, firstPixel.y);
+
+                for (let i = 1; i < poly.vertices.length; i++) {
+                    const pixel = this.worldToPixel(poly.vertices[i].x, poly.vertices[i].y);
+                    ctx.lineTo(pixel.x, pixel.y);
+                }
+
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.setLineDash([]);
             }
 
             drawDomainRegions() {
@@ -1827,49 +2129,85 @@
                 }
             }
 
-            drawOverlapRegion() {
+            drawOverlapRegions() {
                 const ctx = this.ctx;
                 const circleCenter = this.worldToPixel(this.cx, this.cy);
                 const circleRadius = this.R * this.scale;
 
-                ctx.save();
-                // Clip to the shape, then draw the circle so only the overlap remains.
-                if (this.shapeVertices.length > 0) {
-                    ctx.beginPath();
-                    const firstPixel = this.worldToPixel(this.shapeVertices[0].x, this.shapeVertices[0].y);
-                    ctx.moveTo(firstPixel.x, firstPixel.y);
+                const isBoundaryMode = this.boundaryMode === 'perimeter';
+                this.polygons.forEach((poly) => {
+                    if (!poly || !poly.vertices || poly.vertices.length === 0) return;
+                    if (isBoundaryMode) {
+                        const data = this.overlapByBoundary(this.cx, this.cy, this.R, true, poly.vertices);
+                        if (!data || !data.sectors || data.sectors.length === 0) return;
+                        ctx.strokeStyle = poly.color;
+                        ctx.lineWidth = 3;
+                        data.sectors.forEach((sec) => {
+                            ctx.beginPath();
+                            ctx.arc(circleCenter.x, circleCenter.y, circleRadius, -sec.startAngle, -sec.endAngle, true);
+                            ctx.stroke();
+                        });
+                    } else {
+                        ctx.save();
+                        ctx.beginPath();
+                        const firstPixel = this.worldToPixel(poly.vertices[0].x, poly.vertices[0].y);
+                        ctx.moveTo(firstPixel.x, firstPixel.y);
 
-                    for (let i = 1; i < this.shapeVertices.length; i++) {
-                        const pixel = this.worldToPixel(this.shapeVertices[i].x, this.shapeVertices[i].y);
-                        ctx.lineTo(pixel.x, pixel.y);
+                        for (let i = 1; i < poly.vertices.length; i++) {
+                            const pixel = this.worldToPixel(poly.vertices[i].x, poly.vertices[i].y);
+                            ctx.lineTo(pixel.x, pixel.y);
+                        }
+
+                        ctx.closePath();
+                        ctx.clip();
+
+                        ctx.fillStyle = this.colorWithAlpha(poly.color, 0.35);
+                        ctx.strokeStyle = poly.color;
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.arc(circleCenter.x, circleCenter.y, circleRadius, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.stroke();
+                        ctx.restore();
                     }
-
-                    ctx.closePath();
-                    ctx.clip();
-                }
-
-                ctx.fillStyle = 'rgba(255, 152, 0, 0.4)';
-                ctx.strokeStyle = '#FF9800';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(circleCenter.x, circleCenter.y, circleRadius, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.stroke();
-                ctx.restore();
+                });
             }
 
             updateInfo() {
                 document.getElementById('circlePos').textContent =
                     `(${this.cx.toFixed(2)}, ${this.cy.toFixed(2)})`;
 
-                const overlap = this.calculateOverlap(this.cx, this.cy, this.R);
-                document.getElementById('overlapArea').textContent = overlap.toFixed(4);
+                const perPolygon = [];
+                for (let i = 0; i < this.polygons.length; i++) {
+                    const poly = this.polygons[i];
+                    const result = this.calculateOverlap(
+                        this.cx,
+                        this.cy,
+                        this.R,
+                        poly.vertices,
+                        poly.shapeType,
+                        { recordDebug: i === this.activePolygonIndex, shapeMeta: poly }
+                    );
+                    const value = typeof result === 'number' ? result : (result?.value ?? 0);
+                    perPolygon.push({ poly, value });
+                }
 
-                const circleArea = Math.PI * this.R * this.R;
-                document.getElementById('circleArea').textContent = circleArea.toFixed(4);
+                const totalOverlap = perPolygon.reduce((acc, item) => acc + item.value, 0);
+                const isBoundaryMode = this.boundaryMode === 'perimeter';
+                const baseCircleMeasure = isBoundaryMode ? 2 * Math.PI * this.R : Math.PI * this.R * this.R;
+                const measureLabel = isBoundaryMode ? 'Length' : 'Area';
 
-                const percent = (overlap / circleArea * 100).toFixed(1);
+                document.getElementById('overlapLabel').textContent = `Total Overlap ${measureLabel}:`;
+                document.getElementById('overlapArea').textContent = totalOverlap.toFixed(4);
+
+                document.getElementById('circleMeasureLabel').textContent = isBoundaryMode ? 'Circle Circumference:' : 'Circle Area:';
+                document.getElementById('circleArea').textContent = baseCircleMeasure.toFixed(4);
+
+                const percent = (totalOverlap / baseCircleMeasure * 100).toFixed(1);
+                document.getElementById('overlapPercentLabel').textContent = isBoundaryMode ? 'Overlap % of circumference:' : 'Overlap %:';
                 document.getElementById('overlapPercent').textContent = `${percent}%`;
+
+                this.renderPolygonStats(perPolygon, baseCircleMeasure);
 
                 // Helper to get domain name for display
                 const getDomainName = (caseType) => {
@@ -1904,6 +2242,53 @@
                 document.getElementById('debugInfo').textContent = this.debugText;
             }
 
+            renderPolygonStats(stats, baseCircleMeasure) {
+                const container = document.getElementById('polygonStatsContainer');
+                const grid = document.getElementById('polygonStats');
+                if (!container || !grid) return;
+
+                if (!stats || stats.length === 0) {
+                    container.style.display = 'none';
+                    grid.innerHTML = '';
+                    return;
+                }
+
+                container.style.display = 'block';
+                grid.innerHTML = '';
+                const isBoundaryMode = this.boundaryMode === 'perimeter';
+                const metricName = isBoundaryMode ? 'length' : 'area';
+
+                stats.forEach(({ poly, value }) => {
+                    const card = document.createElement('div');
+                    card.className = 'polygon-stat-card';
+
+                    const header = document.createElement('div');
+                    header.className = 'polygon-stat-header';
+
+                    const dot = document.createElement('span');
+                    dot.className = 'color-dot';
+                    dot.style.background = poly.color;
+
+                    const title = document.createElement('span');
+                    title.textContent = `${poly.name} (${poly.shapeType})`;
+
+                    header.appendChild(dot);
+                    header.appendChild(title);
+
+                    const valueLine = document.createElement('div');
+                    valueLine.textContent = `Overlap ${metricName}: ${value.toFixed(4)}`;
+
+                    const percentLine = document.createElement('div');
+                    const percent = (value / baseCircleMeasure * 100).toFixed(1);
+                    percentLine.textContent = `Share of circle: ${percent}%`;
+
+                    card.appendChild(header);
+                    card.appendChild(valueLine);
+                    card.appendChild(percentLine);
+                    grid.appendChild(card);
+                });
+            }
+
             // ===== ANIMATION METHODS =====
 
             /**
@@ -1927,21 +2312,25 @@
 
                 // Add triangles
                 for (const tri of triangles) {
+                    const triValue = tri.value !== undefined ? tri.value : tri.area;
                     elements.push({
                         type: 'triangle',
                         data: tri,
                         startPoint: pointKey(tri.edgeIndex, tri.edgeParam),
-                        endPoint: pointKey(tri.edgeIndex, tri.edgeParamEnd)
+                        endPoint: pointKey(tri.edgeIndex, tri.edgeParamEnd),
+                        metric: triValue
                     });
                 }
 
                 // Add sectors
                 for (const sec of sectors) {
+                    const secValue = sec.value !== undefined ? sec.value : sec.area;
                     elements.push({
                         type: 'sector',
                         data: sec,
                         startPoint: pointKey(sec.fromEdge, sec.fromParam),
-                        endPoint: pointKey(sec.toEdge, sec.toParam)
+                        endPoint: pointKey(sec.toEdge, sec.toParam),
+                        metric: secValue
                     });
                 }
 
@@ -2146,8 +2535,8 @@
                 console.log(`\n--- ALL ELEMENTS (${elements.length}) ---`);
                 elements.forEach((elem, idx) => {
                     const type = elem.type.charAt(0).toUpperCase();
-                    const area = elem.data.area.toFixed(4);
-                    console.log(`[${idx}] ${type} | start: ${elem.startPoint} | end: ${elem.endPoint} | area: ${area}`);
+                    const measureVal = (elem.metric !== undefined ? elem.metric : (elem.data.value ?? elem.data.area ?? 0)).toFixed(4);
+                    console.log(`[${idx}] ${type} | start: ${elem.startPoint} | end: ${elem.endPoint} | value: ${measureVal}`);
                 });
 
                 // Step 2: Find connected components
@@ -2211,8 +2600,8 @@
                 console.log(`\n--- FINAL ANIMATION SEQUENCE (${animationSequence.length}) ---`);
                 animationSequence.forEach((elem, pos) => {
                     const type = elem.type.charAt(0).toUpperCase();
-                    const area = elem.data.area.toFixed(4);
-                    console.log(`${pos}. ${type} | ${elem.startPoint} -> ${elem.endPoint} | area: ${area}`);
+                    const measureVal = (elem.metric !== undefined ? elem.metric : (elem.data.value ?? elem.data.area ?? 0)).toFixed(4);
+                    console.log(`${pos}. ${type} | ${elem.startPoint} -> ${elem.endPoint} | value: ${measureVal}`);
                 });
                 console.log('=====================================\n');
 
@@ -2301,7 +2690,8 @@
                 const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
 
                 // Color by sign of area: positive = blue, negative = red
-                const isPositive = tri.area >= 0;
+                const value = tri.value !== undefined ? tri.value : tri.area;
+                const isPositive = value >= 0;
                 const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
                 const highlightColor = isPositive ? '#0080FF' : '#FF4000';
 
@@ -2324,7 +2714,7 @@
                     ctx.strokeStyle = '#000000';
                     ctx.lineWidth = 3;
                     ctx.font = 'bold 14px monospace';
-                    const label = `T${index}: ${tri.area.toFixed(4)}`;
+                    const label = `T${index}: ${value.toFixed(4)}`;
                     ctx.strokeText(label, centerX - 40, centerY);
                     ctx.fillText(label, centerX - 40, centerY);
                 }
@@ -2338,7 +2728,8 @@
                 const radius = sec.r * this.scale;
 
                 // Color by sign of area: positive = blue, negative = red
-                const isPositive = sec.area >= 0;
+                const value = sec.value !== undefined ? sec.value : sec.area;
+                const isPositive = value >= 0;
                 const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
                 const highlightColor = isPositive ? '#0080FF' : '#FF4000';
 
@@ -2362,7 +2753,7 @@
                     ctx.strokeStyle = '#000000';
                     ctx.lineWidth = 3;
                     ctx.font = 'bold 14px monospace';
-                    const label = `S${index}: ${sec.area.toFixed(4)}`;
+                    const label = `S${index}: ${value.toFixed(4)}`;
                     ctx.strokeText(label, labelX - 40, labelY);
                     ctx.fillText(label, labelX - 40, labelY);
                 }
