@@ -2792,6 +2792,15 @@
 
             /**
              * Draw animated components on the canvas
+             *
+             * VISUALIZATION STRATEGY:
+             * Shows progressive accumulation of overlap area:
+             * 1. Cumulative region (all previous components) - shown in muted color
+             * 2. Current component being added - shown highlighted and overlaid
+             * 3. Running total is displayed numerically
+             *
+             * Sectors are approximated as polygons for cumulative rendering since
+             * the partial sums are not necessarily clean sectors or triangles.
              */
             drawAnimatedComponents() {
                 if (!this.isAnimating || this.animationComponents.length === 0) return;
@@ -2799,21 +2808,99 @@
                 const ctx = this.ctx;
                 let triangleCount = 0;
                 let sectorCount = 0;
+                let cumulativeArea = 0;
 
-                // Draw all components up to current step
-                for (let i = 0; i < this.animationStep && i < this.animationComponents.length; i++) {
-                    const component = this.animationComponents[i];
-                    const isCurrent = (i === this.animationStep - 1);
+                // STEP 1: Draw cumulative region (all components up to but NOT including current)
+                if (this.animationStep > 1) {
+                    this.drawCumulativeRegion(ctx, this.animationStep - 1);
 
-                    if (component.type === 'triangle') {
-                        this.drawAnimatedTriangle(ctx, component.data, isCurrent, ++triangleCount);
-                    } else if (component.type === 'sector') {
-                        this.drawAnimatedSector(ctx, component.data, isCurrent, ++sectorCount);
+                    // Calculate cumulative area
+                    for (let i = 0; i < this.animationStep - 1; i++) {
+                        const component = this.animationComponents[i];
+                        const value = component.data.value !== undefined ?
+                                    component.data.value :
+                                    (component.data.area || 0);
+                        cumulativeArea += value;
                     }
                 }
 
-                // Draw progress info
-                this.drawAnimationProgress(ctx, triangleCount, sectorCount);
+                // STEP 2: Draw current component being added (highlighted)
+                if (this.animationStep > 0 && this.animationStep <= this.animationComponents.length) {
+                    const currentIdx = this.animationStep - 1;
+                    const component = this.animationComponents[currentIdx];
+
+                    if (component.type === 'triangle') {
+                        triangleCount = this.animationComponents.slice(0, this.animationStep)
+                                           .filter(c => c.type === 'triangle').length;
+                        this.drawAnimatedTriangle(ctx, component.data, true, triangleCount);
+                    } else if (component.type === 'sector') {
+                        sectorCount = this.animationComponents.slice(0, this.animationStep)
+                                         .filter(c => c.type === 'sector').length;
+                        this.drawAnimatedSector(ctx, component.data, true, sectorCount);
+                    }
+                }
+
+                // Draw progress info with running total
+                this.drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea);
+            }
+
+            /**
+             * Draw the cumulative region from all components up to (but not including) step
+             * Renders sectors as polygons for proper cumulative display
+             */
+            drawCumulativeRegion(ctx, upToStep) {
+                ctx.save();
+                ctx.globalAlpha = 0.3;  // Muted for background
+                ctx.fillStyle = '#4CAF50';  // Green for cumulative sum
+                ctx.strokeStyle = '#2E7D32';
+                ctx.lineWidth = 1.5;
+
+                // Draw each component as a filled polygon
+                for (let i = 0; i < upToStep && i < this.animationComponents.length; i++) {
+                    const component = this.animationComponents[i];
+
+                    if (component.type === 'triangle') {
+                        // Triangles are simple polygons
+                        const tri = component.data;
+                        const p1 = this.worldToPixel(tri.p1.x, tri.p1.y);
+                        const p2 = this.worldToPixel(tri.p2.x, tri.p2.y);
+                        const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
+
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x, p1.y);
+                        ctx.lineTo(p2.x, p2.y);
+                        ctx.lineTo(p3.x, p3.y);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+
+                    } else if (component.type === 'sector') {
+                        // Approximate sector as polygon with 32 segments
+                        const sec = component.data;
+                        const center = this.worldToPixel(sec.cx, sec.cy);
+                        const radius = sec.r * this.scale;
+                        const segments = 32;
+                        const angleRange = sec.endAngle - sec.startAngle;
+                        const angleStep = angleRange / segments;
+
+                        ctx.beginPath();
+                        ctx.moveTo(center.x, center.y);  // Start from center
+
+                        // Draw arc as line segments
+                        for (let j = 0; j <= segments; j++) {
+                            const angle = sec.startAngle + j * angleStep;
+                            const x = center.x + radius * Math.cos(-angle);  // Negative for canvas coords
+                            const y = center.y + radius * Math.sin(-angle);
+                            ctx.lineTo(x, y);
+                        }
+
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+
+                ctx.restore();
             }
 
             /**
@@ -2896,8 +2983,9 @@
 
             /**
              * Draw animation progress information
+             * Shows step number, component counts, and running total area
              */
-            drawAnimationProgress(ctx, triangleCount, sectorCount) {
+            drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea) {
                 const totalTriangles = this.animationComponents.filter(c => c.type === 'triangle').length;
                 const totalSectors = this.animationComponents.filter(c => c.type === 'sector').length;
 
@@ -2907,6 +2995,20 @@
                 if (this.animationStep > 0 && this.animationStep <= this.animationComponents.length) {
                     ctx.fillText(`Step ${this.animationStep} / ${this.animationComponents.length}`, 10, 85);
                     ctx.fillText(`Triangles: ${triangleCount}/${totalTriangles}, Sectors: ${sectorCount}/${totalSectors}`, 10, 105);
+
+                    // Show cumulative area + current component value
+                    const currentComponent = this.animationComponents[this.animationStep - 1];
+                    const currentValue = currentComponent.data.value !== undefined ?
+                                       currentComponent.data.value :
+                                       (currentComponent.data.area || 0);
+                    const totalSoFar = cumulativeArea + currentValue;
+
+                    ctx.fillStyle = '#4CAF50';  // Green for cumulative
+                    ctx.fillText(`Previous sum: ${cumulativeArea.toFixed(5)}`, 10, 125);
+                    ctx.fillStyle = currentValue >= 0 ? '#0080FF' : '#FF4000';  // Blue/red for current
+                    ctx.fillText(`Adding: ${currentValue >= 0 ? '+' : ''}${currentValue.toFixed(5)}`, 10, 145);
+                    ctx.fillStyle = '#9C27B0';  // Purple for total
+                    ctx.fillText(`New total: ${totalSoFar.toFixed(5)}`, 10, 165);
                 }
             }
 
