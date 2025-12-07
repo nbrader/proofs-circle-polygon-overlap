@@ -415,6 +415,17 @@ The circle-polygon overlap provides a **simplified model** for understanding the
 
 3. **Add winding number debug view**: Display w(polygon, cursor_position) as user moves mouse over 2D view
 
+4. **Mobile/touchscreen support**: Ensure webapp is fully functional on phones and tablets
+   - Use pointer events (unified mouse/touch handling)
+   - Implement pinch-to-zoom and two-finger pan
+   - Responsive layout: stack views vertically on narrow screens
+   - Large touch targets (44×44 CSS pixels minimum)
+   - Tap to add polygon vertices, double-tap to close
+   - Adaptive performance: lower 3D resolution on mobile devices
+   - Support both portrait and landscape orientations
+   - Show touch feedback and use tooltips on tap instead of hover
+   - Test on iOS Safari, Android Chrome, various screen sizes
+
 ### Medium-term (Enhancements)
 
 1. **Self-intersecting polygon support**: Accept user-drawn polygons that cross themselves, use signed area formula with winding interpretation

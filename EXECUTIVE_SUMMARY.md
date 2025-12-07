@@ -181,6 +181,87 @@ These insights suggest powerful interactive demos:
 - Winding number as sum of arguments
 - Educational: reveals algebraic structure
 
+### Mobile/Touchscreen Optimization
+
+**Critical for accessibility:** The webapp should be fully functional on mobile devices with touchscreen interaction.
+
+**Key considerations:**
+
+1. **Touch event handling:**
+   - Replace mouse events with unified pointer events (supports both mouse and touch)
+   - Handle multi-touch gestures: pinch-to-zoom, two-finger pan
+   - Implement touch-and-hold for context menus or additional options
+
+2. **Responsive layout:**
+   - Stack 2D and 3D views vertically on narrow screens
+   - Collapse control panels into expandable drawers
+   - Use viewport-relative sizing for canvases
+   - Ensure minimum touch target size (44×44 CSS pixels recommended)
+
+3. **Touch-friendly interactions:**
+   - **Circle dragging:** Large enough hit area around circle center
+   - **Polygon drawing:** Tap to add vertices, double-tap to close
+   - **Vertex editing:** Drag handles with sufficient touch radius
+   - **Slider controls:** Larger touch targets, consider step buttons as alternative
+   - **Zoom/pan:** Native pinch-zoom on canvas, prevent accidental zoom when dragging
+
+4. **Performance optimization for mobile:**
+   - Throttle expensive recomputations during continuous touch gestures
+   - Use requestAnimationFrame for smooth animations
+   - Reduce 3D plot resolution on mobile (adaptive based on screen size)
+   - Implement progressive rendering for complex polygons
+
+5. **Visual feedback:**
+   - Show visual feedback for touch (ripple effect, highlight)
+   - Display tooltips/values on tap rather than hover
+   - Use haptic feedback where available (Vibration API)
+
+6. **Orientation handling:**
+   - Support both portrait and landscape
+   - Reflow layout on orientation change
+   - Preserve state across orientation changes
+
+**Implementation pattern:**
+```javascript
+// Unified pointer event handling
+canvas.addEventListener('pointerdown', handleStart);
+canvas.addEventListener('pointermove', handleMove);
+canvas.addEventListener('pointerup', handleEnd);
+canvas.addEventListener('pointercancel', handleCancel);
+
+// Touch gesture recognition
+let lastDistance = 0;
+function handleMove(event) {
+    if (event.pointerType === 'touch') {
+        // Implement pinch-to-zoom for multi-touch
+        if (touchPoints.length === 2) {
+            let distance = calculateDistance(touchPoints[0], touchPoints[1]);
+            let scaleFactor = distance / lastDistance;
+            zoom *= scaleFactor;
+            lastDistance = distance;
+        }
+    }
+}
+
+// Adaptive rendering based on device
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const plotResolution = isMobile ? 30 : 60; // Lower resolution on mobile
+```
+
+**Testing checklist:**
+- [ ] iPhone Safari (iOS)
+- [ ] Chrome on Android
+- [ ] iPad (tablet form factor)
+- [ ] Various screen sizes (phones, phablets, tablets)
+- [ ] Landscape and portrait orientations
+- [ ] Touch accuracy with fingers (not just stylus)
+
+**Accessibility bonus:**
+- Support keyboard navigation as alternative to touch/mouse
+- Add ARIA labels for screen readers
+- Ensure sufficient color contrast for outdoor viewing
+- Provide text descriptions of geometric concepts
+
 ## 6. Formal Verification Targets (Rocq)
 
 These insights suggest proof targets:
