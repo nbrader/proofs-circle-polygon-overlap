@@ -2845,62 +2845,333 @@
             }
 
             /**
-             * Draw the cumulative region from all components up to (but not including) step
-             * Renders sectors as polygons for proper cumulative display
+             * Convert a component (triangle or sector) to polygon vertices in world coords
              */
-            drawCumulativeRegion(ctx, upToStep) {
-                ctx.save();
-                ctx.globalAlpha = 0.3;  // Muted for background
-                ctx.fillStyle = '#4CAF50';  // Green for cumulative sum
-                ctx.strokeStyle = '#2E7D32';
-                ctx.lineWidth = 1.5;
+            componentToPolygon(component) {
+                if (component.type === 'triangle') {
+                    const tri = component.data;
+                    return [
+                        { x: tri.p1.x, y: tri.p1.y },
+                        { x: tri.p2.x, y: tri.p2.y },
+                        { x: tri.p3.x, y: tri.p3.y }
+                    ];
+                } else if (component.type === 'sector') {
+                    const sec = component.data;
+                    const segments = 32;
+                    const angleRange = sec.endAngle - sec.startAngle;
+                    const angleStep = angleRange / segments;
 
-                // Draw each component as a filled polygon
-                for (let i = 0; i < upToStep && i < this.animationComponents.length; i++) {
-                    const component = this.animationComponents[i];
+                    const vertices = [{ x: sec.cx, y: sec.cy }];
+                    for (let j = 0; j <= segments; j++) {
+                        const angle = sec.startAngle + j * angleStep;
+                        vertices.push({
+                            x: sec.cx + sec.r * Math.cos(angle),
+                            y: sec.cy + sec.r * Math.sin(angle)
+                        });
+                    }
+                    return vertices;
+                }
+                return [];
+            }
 
-                    if (component.type === 'triangle') {
-                        // Triangles are simple polygons
-                        const tri = component.data;
-                        const p1 = this.worldToPixel(tri.p1.x, tri.p1.y);
-                        const p2 = this.worldToPixel(tri.p2.x, tri.p2.y);
-                        const p3 = this.worldToPixel(tri.p3.x, tri.p3.y);
+            /**
+             * Test if point (px, py) is inside a convex polygon using cross-product method
+             */
+            pointInConvexPoly(px, py, vertices) {
+                if (vertices.length < 3) return false;
+                let sign = null;
+                for (let i = 0; i < vertices.length; i++) {
+                    const v1 = vertices[i];
+                    const v2 = vertices[(i + 1) % vertices.length];
+                    const cross = (v2.x - v1.x) * (py - v1.y) - (v2.y - v1.y) * (px - v1.x);
+                    if (Math.abs(cross) < 1e-12) continue;
+                    const s = cross > 0;
+                    if (sign === null) sign = s;
+                    else if (sign !== s) return false;
+                }
+                return true;
+            }
 
-                        ctx.beginPath();
-                        ctx.moveTo(p1.x, p1.y);
-                        ctx.lineTo(p2.x, p2.y);
-                        ctx.lineTo(p3.x, p3.y);
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.stroke();
+            /**
+             * Sutherland-Hodgman algorithm: clip a polygon against a half-plane defined by edge (e1, e2)
+             * Returns vertices of the clipped polygon (on the left side of e1→e2)
+             */
+            clipPolygonByEdge(polygon, e1, e2) {
+                if (polygon.length < 3) return [];
 
-                    } else if (component.type === 'sector') {
-                        // Approximate sector as polygon with 32 segments
-                        const sec = component.data;
-                        const center = this.worldToPixel(sec.cx, sec.cy);
-                        const radius = sec.r * this.scale;
-                        const segments = 32;
-                        const angleRange = sec.endAngle - sec.startAngle;
-                        const angleStep = angleRange / segments;
+                const output = [];
+                const n = polygon.length;
 
-                        ctx.beginPath();
-                        ctx.moveTo(center.x, center.y);  // Start from center
+                // Edge vector and normal
+                const edgeX = e2.x - e1.x;
+                const edgeY = e2.y - e1.y;
 
-                        // Draw arc as line segments
-                        for (let j = 0; j <= segments; j++) {
-                            const angle = sec.startAngle + j * angleStep;
-                            const x = center.x + radius * Math.cos(-angle);  // Negative for canvas coords
-                            const y = center.y + radius * Math.sin(-angle);
-                            ctx.lineTo(x, y);
+                // Check which side of edge a point is on (positive = left/inside)
+                const side = (p) => edgeX * (p.y - e1.y) - edgeY * (p.x - e1.x);
+
+                // Line intersection
+                const intersect = (p1, p2) => {
+                    const d1 = side(p1);
+                    const d2 = side(p2);
+                    const t = d1 / (d1 - d2);
+                    return {
+                        x: p1.x + t * (p2.x - p1.x),
+                        y: p1.y + t * (p2.y - p1.y)
+                    };
+                };
+
+                for (let i = 0; i < n; i++) {
+                    const curr = polygon[i];
+                    const next = polygon[(i + 1) % n];
+                    const currSide = side(curr);
+                    const nextSide = side(next);
+
+                    if (currSide >= 0) {
+                        // Current vertex is inside
+                        output.push(curr);
+                        if (nextSide < 0) {
+                            // Next is outside, add intersection
+                            output.push(intersect(curr, next));
                         }
-
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.stroke();
+                    } else if (nextSide >= 0) {
+                        // Current is outside, next is inside, add intersection
+                        output.push(intersect(curr, next));
                     }
                 }
 
-                ctx.restore();
+                return output;
+            }
+
+            /**
+             * Clip polygon A by convex polygon B (compute A ∩ B)
+             * Returns the intersection polygon vertices
+             */
+            clipConvexPolygons(polyA, polyB) {
+                if (polyA.length < 3 || polyB.length < 3) return [];
+
+                let result = [...polyA];
+
+                for (let i = 0; i < polyB.length; i++) {
+                    if (result.length < 3) return [];
+                    const e1 = polyB[i];
+                    const e2 = polyB[(i + 1) % polyB.length];
+                    result = this.clipPolygonByEdge(result, e1, e2);
+                }
+
+                return result;
+            }
+
+            /**
+             * Compute signed area of a polygon (positive = CCW, negative = CW)
+             */
+            polygonArea(vertices) {
+                if (vertices.length < 3) return 0;
+                let area = 0;
+                for (let i = 0; i < vertices.length; i++) {
+                    const j = (i + 1) % vertices.length;
+                    area += vertices[i].x * vertices[j].y;
+                    area -= vertices[j].x * vertices[i].y;
+                }
+                return area / 2;
+            }
+
+            /**
+             * Subtract convex polygon B from convex polygon A
+             * Returns an array of polygons representing A - B
+             * Note: Result may be non-convex, returned as triangulated pieces
+             */
+            subtractConvexPolygons(polyA, polyB) {
+                if (polyA.length < 3) return [];
+                if (polyB.length < 3) return [polyA];
+
+                // Compute intersection
+                const intersection = this.clipConvexPolygons(polyA, polyB);
+
+                // If no intersection, A is unchanged
+                if (intersection.length < 3) return [polyA];
+
+                // If intersection equals A (within tolerance), A is fully inside B
+                const areaA = Math.abs(this.polygonArea(polyA));
+                const areaInt = Math.abs(this.polygonArea(intersection));
+                if (Math.abs(areaA - areaInt) < 1e-10) return [];
+
+                // Otherwise, we need to compute A - intersection
+                // For simplicity, triangulate the difference using ear clipping on the boundary
+                // This is complex; use a simpler approach: return the original minus intersection area
+                // by returning both polygons with opposite winding for rendering
+
+                // Simple approach: return A with a "hole" represented as reversed intersection
+                // This works with canvas evenodd fill rule
+                return [{ outer: polyA, hole: intersection }];
+            }
+
+            /**
+             * Compute net winding regions from positive and negative polygon sets.
+             * Returns { positive: [...polygons], negative: [...polygons] }
+             * where each array contains polygons with their net winding after cancellation.
+             */
+            computeNetWindingRegions(positivePolys, negativePolys) {
+                // For each positive polygon, subtract all negative polygons that intersect it
+                // For each negative polygon, subtract all positive polygons that intersect it
+
+                const netPositive = [];
+                const netNegative = [];
+
+                // Process positive polygons
+                for (const posPoly of positivePolys) {
+                    let remaining = [posPoly];
+
+                    for (const negPoly of negativePolys) {
+                        const newRemaining = [];
+                        for (const poly of remaining) {
+                            const intersection = this.clipConvexPolygons(poly, negPoly);
+                            if (intersection.length < 3) {
+                                // No intersection, poly unchanged
+                                newRemaining.push(poly);
+                            } else {
+                                // Has intersection - mark as having a hole
+                                newRemaining.push({ outer: poly, hole: intersection });
+                            }
+                        }
+                        remaining = newRemaining;
+                    }
+                    netPositive.push(...remaining);
+                }
+
+                // Process negative polygons
+                for (const negPoly of negativePolys) {
+                    let remaining = [negPoly];
+
+                    for (const posPoly of positivePolys) {
+                        const newRemaining = [];
+                        for (const poly of remaining) {
+                            const actualPoly = poly.outer || poly;
+                            const intersection = this.clipConvexPolygons(actualPoly, posPoly);
+                            if (intersection.length < 3) {
+                                newRemaining.push(poly);
+                            } else {
+                                newRemaining.push({ outer: actualPoly, hole: intersection });
+                            }
+                        }
+                        remaining = newRemaining;
+                    }
+                    netNegative.push(...remaining);
+                }
+
+                return { positive: netPositive, negative: netNegative };
+            }
+
+            /**
+             * Draw the cumulative region showing net winding number.
+             *
+             * Computes actual net winding at each pixel by counting how many
+             * +1 shapes contain it minus how many -1 shapes contain it.
+             * Colors by net winding: positive = blue, negative = red, zero = transparent.
+             * Intensity increases with |winding|.
+             */
+            drawCumulativeRegion(ctx, upToStep) {
+                if (upToStep <= 0) return;
+
+                // Collect all polygons with their winding contribution
+                const polys = [];
+                for (let i = 0; i < upToStep && i < this.animationComponents.length; i++) {
+                    const component = this.animationComponents[i];
+                    const value = component.data.value !== undefined
+                        ? component.data.value
+                        : (component.data.area || 0);
+                    const vertices = this.componentToPolygon(component);
+                    if (vertices.length < 3) continue;
+
+                    // Convert to pixel coordinates
+                    const pixelVerts = vertices.map(v => this.worldToPixel(v.x, v.y));
+                    polys.push({
+                        vertices: pixelVerts,
+                        winding: value >= 0 ? 1 : -1
+                    });
+                }
+
+                if (polys.length === 0) return;
+
+                // Compute bounding box in pixel coordinates
+                let minPx = Infinity, maxPx = -Infinity, minPy = Infinity, maxPy = -Infinity;
+                for (const poly of polys) {
+                    for (const v of poly.vertices) {
+                        minPx = Math.min(minPx, v.x);
+                        maxPx = Math.max(maxPx, v.x);
+                        minPy = Math.min(minPy, v.y);
+                        maxPy = Math.max(maxPy, v.y);
+                    }
+                }
+
+                // Add margin and clamp to canvas
+                minPx = Math.max(0, Math.floor(minPx) - 2);
+                maxPx = Math.min(this.canvas2d.width, Math.ceil(maxPx) + 2);
+                minPy = Math.max(0, Math.floor(minPy) - 2);
+                maxPy = Math.min(this.canvas2d.height, Math.ceil(maxPy) + 2);
+
+                const width = maxPx - minPx;
+                const height = maxPy - minPy;
+                if (width <= 0 || height <= 0) return;
+
+                // Create offscreen canvas for compositing
+                const offscreen = document.createElement('canvas');
+                offscreen.width = width;
+                offscreen.height = height;
+                const offCtx = offscreen.getContext('2d');
+                const imageData = offCtx.createImageData(width, height);
+                const data = imageData.data;
+
+                // Point-in-polygon test (works for convex and concave)
+                const pointInPoly = (px, py, verts) => {
+                    let inside = false;
+                    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+                        const xi = verts[i].x, yi = verts[i].y;
+                        const xj = verts[j].x, yj = verts[j].y;
+                        if (((yi > py) !== (yj > py)) &&
+                            (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+                            inside = !inside;
+                        }
+                    }
+                    return inside;
+                };
+
+                // For each pixel, compute net winding
+                for (let py = 0; py < height; py++) {
+                    const canvasY = minPy + py;
+                    for (let px = 0; px < width; px++) {
+                        const canvasX = minPx + px;
+                        let netWinding = 0;
+
+                        for (const poly of polys) {
+                            if (pointInPoly(canvasX + 0.5, canvasY + 0.5, poly.vertices)) {
+                                netWinding += poly.winding;
+                            }
+                        }
+
+                        if (netWinding !== 0) {
+                            const idx = (py * width + px) * 4;
+                            const intensity = Math.min(Math.abs(netWinding), 3);
+                            const alpha = Math.floor(60 + 50 * intensity); // 60-210
+
+                            if (netWinding > 0) {
+                                // Blue for positive
+                                data[idx] = 0;
+                                data[idx + 1] = Math.floor(80 + 20 * intensity);
+                                data[idx + 2] = 255;
+                            } else {
+                                // Red for negative
+                                data[idx] = 255;
+                                data[idx + 1] = Math.floor(40 + 10 * intensity);
+                                data[idx + 2] = 0;
+                            }
+                            data[idx + 3] = alpha;
+                        }
+                    }
+                }
+
+                // Put image data on offscreen canvas, then composite onto main canvas
+                offCtx.putImageData(imageData, 0, 0);
+                ctx.drawImage(offscreen, minPx, minPy);
             }
 
             /**
