@@ -946,6 +946,10 @@
                 if (this.polygonVertices.length >= 3) {
                     this.customVertices = this.polygonVertices;
                     document.getElementById('customVertices').value = JSON.stringify(this.customVertices);
+                    // Switch to custom polygon mode
+                    this.shapeType = 'custom';
+                    document.getElementById('shapeType').value = 'custom';
+                    this.updateShapeControls();
                     this.updateShapeVertices();
                 }
                 this.isDrawingPolygon = false;
