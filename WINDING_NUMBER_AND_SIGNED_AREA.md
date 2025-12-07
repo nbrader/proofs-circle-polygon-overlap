@@ -831,3 +831,344 @@ For this webapp, complex numbers are most valuable in:
 2. **Rotation/transformation operations** (single multiplication)
 3. **Fourier-based inverse problem** (already using complex exponentials)
 4. **Formal proofs in Rocq** (shorter, more algebraic reasoning)
+
+## Shoelace Formula Optimizations and Generalizations
+
+### Standard Shoelace Formula
+
+For a polygon with vertices (x₀, y₀), (x₁, y₁), ..., (x_{n-1}, y_{n-1}):
+
+```
+A = (1/2) |∑_{i=0}^{n-1} (x_i y_{i+1} - x_{i+1} y_i)|
+```
+
+Or in signed form (counterclockwise positive):
+```
+A_signed = (1/2) ∑_{i=0}^{n-1} (x_i y_{i+1} - x_{i+1} y_i)
+```
+
+### Three Equivalent Forms via Green's Theorem
+
+Green's theorem gives three equivalent formulations:
+
+```
+∬_R dA = ∮_∂R x dy                    (Form 1: vertical trapezoids)
+       = -∮_∂R y dx                   (Form 2: horizontal trapezoids)
+       = (1/2) ∮_∂R (x dy - y dx)     (Form 3: symmetric)
+```
+
+#### **Form 1: Vertical Trapezoids (Reference: y-axis)**
+
+```
+A = ∑_{i=0}^{n-1} x_i (y_{i+1} - y_i)
+  = ∑_{i=0}^{n-1} x_i Δy_i
+```
+
+**Geometric interpretation:** Each edge projects to a vertical trapezoid with:
+- Left/right edges at x = x_i and x = x_{i+1}
+- Top/bottom defined by y values
+- Signed height = y_{i+1} - y_i
+- Area contribution = x_i · (y_{i+1} - y_i)
+
+**Advantage:** Only one multiplication per edge (saves ~50% multiplications vs Form 3)
+
+#### **Form 2: Horizontal Trapezoids (Reference: x-axis)**
+
+```
+A = -∑_{i=0}^{n-1} y_i (x_{i+1} - x_i)
+  = ∑_{i=0}^{n-1} y_i Δx_i     (with flipped sign convention)
+```
+
+**Geometric interpretation:** Each edge projects to a horizontal trapezoid:
+- Bottom on x-axis
+- Signed width = x_{i+1} - x_i
+- Average height ≈ y_i (exactly: (y_i + y_{i+1})/2, but the sum telescopes)
+- Area contribution = -y_i · (x_{i+1} - x_i)
+
+**Advantage:** Same computational savings as Form 1
+
+#### **Form 3: Symmetric (Average of Forms 1 and 2)**
+
+```
+A = (1/2) ∑_{i=0}^{n-1} (x_i y_{i+1} - x_{i+1} y_i)
+```
+
+**Advantage:** Better numerical stability (errors from x and y directions partially cancel)
+
+### Key Insight: Line Segments to a Line (Not a Point)
+
+**The shoelace formula computes signed area using trapezoids from a reference LINE, not triangles from a point!**
+
+- **Form 1** uses the **y-axis** as reference (x = 0 line)
+- **Form 2** uses the **x-axis** as reference (y = 0 line)
+- **Form 3** uses both (symmetric combination)
+
+Each edge contributes the signed area of a trapezoid from the reference line to that edge.
+
+**Contrast with triangle decomposition:**
+- Circle-polygon overlap algorithm: triangles from **circle center** (a point) to polygon edges
+- Shoelace formula: trapezoids from **coordinate axis** (a line) to polygon edges
+
+Both are valid by Green's theorem, but different reference shapes (point vs line) lead to different formulas.
+
+### Generalization: Arbitrary Reference Line
+
+For a reference line L: **ax + by + c = 0**, the signed area can be computed as:
+
+```
+A = (1/2) ∮_∂P (ax + by + c) · (b dx - a dy) / (a² + b²)
+```
+
+**Simplification for axis-aligned lines:**
+- L is x-axis (y = 0, so a=0, b=1, c=0): A = (1/2) ∮ y · dx = -∮ y dx (Form 2)
+- L is y-axis (x = 0, so a=1, b=0, c=0): A = (1/2) ∮ x · (-dy) = ∮ x dy (Form 1)
+
+**Use case:** When polygon has preferred orientation, choosing reference line parallel to longest edge can improve numerical conditioning.
+
+### Computational Optimizations
+
+#### 1. **Avoid Division by 2 (Scaled Arithmetic)**
+
+Compute 2A instead of A throughout calculations:
+```javascript
+let doubleArea = 0;
+for (let i = 0; i < n; i++) {
+    doubleArea += x[i] * (y[(i+1) % n] - y[i]);  // Form 1
+}
+// Use doubleArea directly if only comparing areas
+// Or divide once at the end: let area = doubleArea / 2;
+```
+
+**Advantage:** Saves one division per polygon, useful when comparing areas without needing exact values.
+
+#### 2. **Incremental/Streaming Computation**
+
+Compute area as vertices arrive (e.g., user drawing polygon):
+```javascript
+class PolygonArea {
+    constructor() {
+        this.area = 0;
+        this.firstVertex = null;
+        this.prevVertex = null;
+    }
+
+    addVertex(x, y) {
+        if (this.firstVertex === null) {
+            this.firstVertex = {x, y};
+        } else {
+            // Form 1: area += prev.x * (y - prev.y)
+            this.area += this.prevVertex.x * (y - this.prevVertex.y);
+        }
+        this.prevVertex = {x, y};
+    }
+
+    close() {
+        // Add final edge back to first vertex
+        if (this.prevVertex && this.firstVertex) {
+            this.area += this.prevVertex.x *
+                        (this.firstVertex.y - this.prevVertex.y);
+        }
+        return this.area;
+    }
+}
+```
+
+**Advantage:** Online algorithm, O(1) memory for area accumulation.
+
+#### 3. **Numerical Stability: Kahan Summation**
+
+For polygons with many vertices or extreme coordinate ranges:
+```javascript
+function shoelaceKahan(vertices) {
+    let sum = 0;
+    let c = 0;  // Compensation for lost low-order bits
+
+    for (let i = 0; i < vertices.length; i++) {
+        let j = (i + 1) % vertices.length;
+        let term = vertices[i].x * vertices[j].y -
+                   vertices[j].x * vertices[i].y;
+
+        let y = term - c;
+        let t = sum + y;
+        c = (t - sum) - y;
+        sum = t;
+    }
+
+    return sum / 2;
+}
+```
+
+**Advantage:** Reduces floating-point rounding errors from O(n·ε) to O(ε) where ε is machine epsilon.
+
+#### 4. **SIMD/Vectorization**
+
+Modern CPUs can compute multiple cross products simultaneously:
+```javascript
+// Pseudocode for vectorized shoelace (4 edges at a time)
+for (let i = 0; i < n; i += 4) {
+    // Load 4 vertices at once
+    let x_vec = SIMD.Float64x4(x[i], x[i+1], x[i+2], x[i+3]);
+    let y_vec = SIMD.Float64x4(y[i], y[i+1], y[i+2], y[i+3]);
+    let x_next = SIMD.Float64x4(x[i+1], x[i+2], x[i+3], x[i+4]);
+    let y_next = SIMD.Float64x4(y[i+1], y[i+2], y[i+3], y[i+4]);
+
+    // Compute 4 cross products
+    let cross = SIMD.sub(SIMD.mul(x_vec, y_next),
+                         SIMD.mul(x_next, y_vec));
+
+    sum = SIMD.add(sum, cross);
+}
+```
+
+**Advantage:** Up to 4× speedup on modern processors with AVX support.
+
+#### 5. **Integer Arithmetic for Lattice Polygons**
+
+If all vertices have integer coordinates:
+```javascript
+function shoelaceInteger(vertices) {
+    // Compute 2A to avoid division
+    let doubleArea = 0n;  // BigInt for exact arithmetic
+
+    for (let i = 0; i < vertices.length; i++) {
+        let j = (i + 1) % vertices.length;
+        doubleArea += BigInt(vertices[i].x) * BigInt(vertices[j].y) -
+                      BigInt(vertices[j].x) * BigInt(vertices[i].y);
+    }
+
+    return Number(doubleArea) / 2;  // Convert to float at the end
+}
+```
+
+**Advantage:** Exact computation with no rounding errors. Useful for grid-aligned polygons.
+
+**Connection to Pick's Theorem:** For lattice polygons (integer vertices):
+```
+A = I + B/2 - 1
+```
+where I = interior lattice points, B = boundary lattice points.
+
+#### 6. **Fused Multiply-Add (FMA)**
+
+On hardware supporting FMA, compute `a*b + c` as a single operation:
+```javascript
+// Using hypothetical FMA instruction
+for (let i = 0; i < n; i++) {
+    let j = (i + 1) % n;
+    // sum = FMA(x[i], y[j], sum) - x[j]*y[i]
+    sum = Math.fma(vertices[i].x, vertices[j].y, sum);
+    sum -= vertices[j].x * vertices[i].y;
+}
+```
+
+**Advantage:** Reduced rounding errors and potential performance improvement.
+
+### Optimization Selection Guide
+
+| Use Case | Best Form | Reason |
+|----------|-----------|--------|
+| General polygons | Form 3 (symmetric) | Best numerical stability |
+| Horizontal polygons (small Δy) | Form 2 (x-axis ref) | Avoids small differences |
+| Vertical polygons (small Δx) | Form 1 (y-axis ref) | Avoids small differences |
+| Many vertices | Kahan summation | Reduces accumulated error |
+| Integer coordinates | Integer arithmetic | Exact computation |
+| Real-time streaming | Incremental (Form 1 or 2) | Online algorithm |
+| Performance-critical | SIMD + Form 3 | Parallelism + stability |
+
+### Application to Circle-Polygon Overlap
+
+The webapp's boundary-walk algorithm uses a **different** decomposition:
+
+**Current approach:**
+- Triangles from **circle center** to polygon edges
+- Formula: `A_triangle = (1/2) |x₁y₂ - x₂y₁|` (in circle-centered coordinates)
+
+**Alternative using shoelace optimization:**
+- Could reformulate as trapezoids from x-axis to edges
+- But circle center is the natural reference point for circular sectors
+- **Hybrid approach:** Use shoelace for pure polygon area, triangle decomposition for circle overlap
+
+**Recommended:**
+```javascript
+// Compute polygon area first (shoelace, Form 1 for efficiency)
+function polygonArea(vertices) {
+    let area = 0;
+    for (let i = 0; i < vertices.length; i++) {
+        let j = (i + 1) % vertices.length;
+        area += vertices[i].x * (vertices[j].y - vertices[i].y);
+    }
+    return area;  // Signed area (no division by 2 needed if sign matters)
+}
+
+// Compute circle-polygon overlap (triangle decomposition from circle center)
+function overlapArea(polygon, circleCenter, radius) {
+    let c = circleCenter;
+    let overlap = 0;
+
+    for (let edge of polygon.edges) {
+        if (edgeIntersectsCircle(edge, c, radius)) {
+            // Signed triangle area from circle center
+            let v1 = {x: edge.x1 - c.x, y: edge.y1 - c.y};
+            let v2 = {x: edge.x2 - c.x, y: edge.y2 - c.y};
+            overlap += 0.5 * (v1.x * v2.y - v2.x * v1.y);
+
+            // Add sector contribution...
+        }
+    }
+
+    return overlap;
+}
+```
+
+### Complex Form Optimization
+
+In complex notation, Forms 1 and 2 correspond to:
+
+```
+A = Im(∮ x dy)       ↔  Im(∮ Re(z) dz)        (Form 1)
+A = -Im(∮ y dx)      ↔  -Im(∮ Im(z) d(Re(z))) (Form 2)
+A = (1/2) Im(∮ z̄ dz)                           (Form 3)
+```
+
+**Form 3 in complex** is most elegant:
+```javascript
+function shoelaceComplex(vertices) {
+    let sum = new Complex(0, 0);
+
+    for (let i = 0; i < vertices.length; i++) {
+        let j = (i + 1) % vertices.length;
+        let z1 = new Complex(vertices[i].x, vertices[i].y);
+        let z2 = new Complex(vertices[j].x, vertices[j].y);
+
+        // sum += z̄₁ · z₂
+        sum = sum.add(z1.conj().mul(z2));
+    }
+
+    return sum.im() / 2;  // (1/2) Im(∑ z̄ᵢ zᵢ₊₁)
+}
+```
+
+### Historical Note
+
+The shoelace formula is also called:
+- **Surveyor's formula** (land area calculation)
+- **Gauss's area formula** (attributed to Carl Friedrich Gauss)
+- **Cross product sum** (modern interpretation)
+
+The trapezoid interpretation (line reference) dates to the 18th century but is less commonly taught than the triangle interpretation (point reference), despite being more fundamental to Green's theorem.
+
+### Visualization Idea for Webapp
+
+Add a **shoelace visualization mode** showing:
+
+1. **Form 1 animation**: Vertical trapezoids from y-axis to each edge
+2. **Form 2 animation**: Horizontal trapezoids from x-axis to each edge
+3. **Form 3**: Both simultaneously, showing how they average
+
+**Interactive element:**
+- User can drag a reference line
+- Webapp recomputes area using trapezoids from that line
+- Shows that area is invariant regardless of reference line choice
+- Demonstrates Green's theorem geometrically
+
+This would complement the existing triangle-from-circle-center visualization and show the duality between point-reference (triangles) and line-reference (trapezoids) decompositions.
