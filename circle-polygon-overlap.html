@@ -2780,18 +2780,31 @@
 
             /**
              * Animation frame update
+             *
+             * Steps 1..N show cumulative region + highlighted current component.
+             * Step N+1 shows just the final cumulative region (no highlight), then lingers.
              */
             animateNextFrame() {
                 if (!this.isAnimating) return;
 
                 this.updateDisplay();
-                this.animationStep++;
 
-                if (this.animationStep > this.animationComponents.length) {
-                    this.animationStep = 0; // Loop
+                // Determine delay AFTER showing current step
+                let delay = 800;  // Normal step delay
+
+                // If we just showed the completed step (N+1), linger before restarting
+                if (this.animationStep === this.animationComponents.length + 1) {
+                    delay = 2500;
                 }
 
-                this.animationTimerId = setTimeout(() => this.animateNextFrame(), 800);
+                // Now increment for next frame
+                this.animationStep++;
+
+                if (this.animationStep > this.animationComponents.length + 1) {
+                    this.animationStep = 0;
+                }
+
+                this.animationTimerId = setTimeout(() => this.animateNextFrame(), delay);
             }
 
             /**
@@ -2802,6 +2815,7 @@
              * 1. Cumulative region (all previous components) - shown in muted color
              * 2. Current component being added - shown highlighted and overlaid
              * 3. Running total is displayed numerically
+             * 4. Final step (N+1) shows complete sum without highlight
              *
              * Sectors are approximated as polygons for cumulative rendering since
              * the partial sums are not necessarily clean sectors or triangles.
@@ -2813,34 +2827,53 @@
                 let triangleCount = 0;
                 let sectorCount = 0;
                 let cumulativeArea = 0;
+                const totalComponents = this.animationComponents.length;
+                const isCompletedStep = this.animationStep === totalComponents + 1;
 
-                // STEP 1: Draw cumulative region (all components up to but NOT including current)
-                if (this.animationStep > 1) {
-                    this.drawCumulativeRegion(ctx, this.animationStep - 1);
+                // STEP 1: Draw cumulative region
+                if (isCompletedStep) {
+                    // Final step: show all components as cumulative region
+                    this.drawCumulativeRegion(ctx, totalComponents);
 
-                    // Calculate cumulative area
-                    for (let i = 0; i < this.animationStep - 1; i++) {
+                    // Calculate total area
+                    for (let i = 0; i < totalComponents; i++) {
                         const component = this.animationComponents[i];
                         const value = component.data.value !== undefined ?
                                     component.data.value :
                                     (component.data.area || 0);
                         cumulativeArea += value;
                     }
-                }
+                    triangleCount = this.animationComponents.filter(c => c.type === 'triangle').length;
+                    sectorCount = this.animationComponents.filter(c => c.type === 'sector').length;
+                } else {
+                    // Normal steps: show cumulative up to but NOT including current
+                    if (this.animationStep > 1) {
+                        this.drawCumulativeRegion(ctx, this.animationStep - 1);
 
-                // STEP 2: Draw current component being added (highlighted)
-                if (this.animationStep > 0 && this.animationStep <= this.animationComponents.length) {
-                    const currentIdx = this.animationStep - 1;
-                    const component = this.animationComponents[currentIdx];
+                        // Calculate cumulative area
+                        for (let i = 0; i < this.animationStep - 1; i++) {
+                            const component = this.animationComponents[i];
+                            const value = component.data.value !== undefined ?
+                                        component.data.value :
+                                        (component.data.area || 0);
+                            cumulativeArea += value;
+                        }
+                    }
 
-                    if (component.type === 'triangle') {
-                        triangleCount = this.animationComponents.slice(0, this.animationStep)
-                                           .filter(c => c.type === 'triangle').length;
-                        this.drawAnimatedTriangle(ctx, component.data, true, triangleCount);
-                    } else if (component.type === 'sector') {
-                        sectorCount = this.animationComponents.slice(0, this.animationStep)
-                                         .filter(c => c.type === 'sector').length;
-                        this.drawAnimatedSector(ctx, component.data, true, sectorCount);
+                    // STEP 2: Draw current component being added (highlighted)
+                    if (this.animationStep > 0 && this.animationStep <= totalComponents) {
+                        const currentIdx = this.animationStep - 1;
+                        const component = this.animationComponents[currentIdx];
+
+                        if (component.type === 'triangle') {
+                            triangleCount = this.animationComponents.slice(0, this.animationStep)
+                                               .filter(c => c.type === 'triangle').length;
+                            this.drawAnimatedTriangle(ctx, component.data, true, triangleCount);
+                        } else if (component.type === 'sector') {
+                            sectorCount = this.animationComponents.slice(0, this.animationStep)
+                                             .filter(c => c.type === 'sector').length;
+                            this.drawAnimatedSector(ctx, component.data, true, sectorCount);
+                        }
                     }
                 }
 
