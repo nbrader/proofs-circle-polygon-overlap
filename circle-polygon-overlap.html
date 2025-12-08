@@ -2641,6 +2641,17 @@
              * Main animation starter
              */
             startAnimation() {
+                // If already animating, don't restart
+                if (this.isAnimating) {
+                    return;
+                }
+
+                // Clear any existing animation timer to prevent multiple chains
+                if (this.animationTimerId) {
+                    clearTimeout(this.animationTimerId);
+                    this.animationTimerId = null;
+                }
+
                 // Get overlap data
                 const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
 
@@ -2789,14 +2800,16 @@
                     delay = 2500;
                 }
 
-                // Now increment for next frame
-                this.animationStep++;
-
-                if (this.animationStep > this.animationComponents.length + 1) {
-                    this.animationStep = 0;
-                }
-
-                this.animationTimerId = setTimeout(() => this.animateNextFrame(), delay);
+                // Increment happens inside the callback, just before displaying next frame
+                // This keeps animationStep at the "currently displayed" value until we're
+                // ready to show the next frame, so zoom/pan redraws show the correct step
+                this.animationTimerId = setTimeout(() => {
+                    this.animationStep++;
+                    if (this.animationStep > this.animationComponents.length + 1) {
+                        this.animationStep = 0;
+                    }
+                    this.animateNextFrame();
+                }, delay);
             }
 
             /**
