@@ -441,6 +441,7 @@
                 // Animation state
                 this.isAnimating = false;
                 this.animationComponents = [];
+                this.polygonComponentCount = 0;
                 this.animationStep = 0;
                 this.animationTimerId = null;
                 this.wasAnimatingBeforeDrag = false;
@@ -1226,19 +1227,37 @@
                 return 0;
             }
 
-            // Check if a point is inside the polygon using ray casting algorithm
-            pointInPolygon(x, y, verts = this.shapeVertices) {
+            // Compute winding number of polygon around point (x, y)
+            // Positive = CCW coverage, negative = CW coverage
+            windingNumber(x, y, verts = this.shapeVertices) {
                 const vertices = verts || [];
-                let inside = false;
-                for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-                    const xi = vertices[i].x, yi = vertices[i].y;
-                    const xj = vertices[j].x, yj = vertices[j].y;
+                if (vertices.length === 0) return 0;
 
-                    const intersect = ((yi > y) !== (yj > y))
-                        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-                    if (intersect) inside = !inside;
+                let angleSum = 0;
+                for (let i = 0; i < vertices.length; i++) {
+                    const v1 = vertices[i];
+                    const v2 = vertices[(i + 1) % vertices.length];
+
+                    // Translate so point is at origin
+                    const a = { x: v1.x - x, y: v1.y - y };
+                    const b = { x: v2.x - x, y: v2.y - y };
+
+                    // atan2(cross, dot) gives signed turning angle from a to b
+                    const cross = a.x * b.y - a.y * b.x;
+                    const dot = a.x * b.x + a.y * b.y;
+                    angleSum += Math.atan2(cross, dot);
                 }
-                return inside;
+
+                const winding = angleSum / (2 * Math.PI);
+                const rounded = Math.round(winding);
+                // Snap tiny numerical noise to nearest integer
+                if (Math.abs(winding - rounded) < 1e-7) return rounded;
+                return winding;
+            }
+
+            // Check if a point is inside the polygon using the non-zero winding rule
+            pointInPolygon(x, y, verts = this.shapeVertices) {
+                return this.windingNumber(x, y, verts) !== 0;
             }
 
             circleSegmentIntersections(p1, p2, r) {
@@ -1333,6 +1352,8 @@
                 let measure = 0;  // area or arc length depending on mode
                 const triangles = [];
                 const sectors = [];
+                const centerWinding = this.windingNumber(cx, cy, shapeVerts);
+                const centerInside = centerWinding !== 0;
 
                 // STEP 1: Walk polygon edges and accumulate triangular contributions
                 // Each edge inside the circle contributes signed area via the shoelace formula
@@ -1372,6 +1393,9 @@
                             // Equivalently: (1/2) Im(z̄₁ · z₂) in complex notation
                             if (!isBoundaryMode) {
                                 const triangleArea = 0.5 * (a.x * b.y - a.y * b.x);
+                                if (Math.abs(triangleArea) < 1e-12) {
+                                    continue; // Skip degenerate zero-area slices
+                                }
                                 measure += triangleArea;
                                 if (collectData) {
                                     triangles.push({
@@ -1404,7 +1428,7 @@
 
                 // Special case: no overlap
                 // Exact test: center outside polygon AND all vertices farther than radius from center
-                if (!this.pointInPolygon(cx, cy, shapeVerts)) {
+                if (!centerInside) {
                     let noOverlap = true;
                     for (const v of shapeVerts) {
                         const dx = v.x - cx;
@@ -1434,7 +1458,7 @@
 
                 // Special case: circle fully inside polygon
                 // Exact test: center inside polygon AND all edges farther than radius from center
-                if (!isBoundaryMode && triangles.length === 0 && this.pointInPolygon(cx, cy, shapeVerts)) {
+                if (!isBoundaryMode && triangles.length === 0 && centerInside) {
                     let circleFullyInside = true;
                     for (let i = 0; i < shapeVerts.length; i++) {
                         const v1 = shapeVerts[i];
@@ -1446,10 +1470,11 @@
                         }
                     }
                     if (circleFullyInside) {
-                        const fullArea = Math.PI * r * r;
+                        const winding = centerWinding || 1;
+                        const fullArea = Math.PI * r * r * winding;
                         if (collectData) {
                             return { value: fullArea, triangles: [], sectors: [{
-                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, value: fullArea,
+                                cx, cy, r, startAngle: 0, endAngle: 2 * Math.PI, value: fullArea, winding,
                                 fromEdge: 0, fromParam: 0, toEdge: 0, toParam: 0
                             }] };
                         }
@@ -1513,39 +1538,55 @@
                         const midNorm = ((mid % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
                         const mx = cx + r * Math.cos(midNorm);
                         const my = cy + r * Math.sin(midNorm);
-                        if (!this.pointInPolygon(mx, my, shapeVerts)) continue;
+                        const windingRaw = this.windingNumber(mx, my, shapeVerts);
+                        const winding = Math.abs(windingRaw - Math.round(windingRaw)) < 1e-7
+                            ? Math.round(windingRaw)
+                            : windingRaw;
+                        if (winding === 0) continue;
 
-                        // Compute contribution: arc length (boundary mode) or sector area (area mode)
-                        const contribution = isBoundaryMode ? r * delta : 0.5 * r * r * delta;
+                        // Compute contribution weighted by winding (respects multiplicity and orientation)
+                        const baseContribution = isBoundaryMode ? r * delta : 0.5 * r * r * delta;
+                        const contribution = baseContribution * winding;
                         measure += contribution;
+
+                        const forward = winding > 0;
+                        const startAngle = forward ? start : end;
+                        const endAngle = forward ? end : start;
+                        const fromEdge = forward ? a.edge : b.edge;
+                        const toEdge = forward ? b.edge : a.edge;
+                        const fromParam = forward ? a.param : b.param;
+                        const toParam = forward ? b.param : a.param;
 
                         if (collectData) {
                             sectors.push({
                                 cx, cy, r,
-                                startAngle: start,
-                                endAngle: end,
+                                startAngle,
+                                endAngle,
                                 value: contribution,
-                                fromEdge: a.edge,
-                                fromParam: a.param,
-                                toEdge: b.edge,
-                                toParam: b.param
+                                winding,
+                                fromEdge,
+                                fromParam,
+                                toEdge,
+                                toParam
                             });
                         }
                     }
-                } else if (collectData && isBoundaryMode && this.pointInPolygon(cx, cy, shapeVerts)) {
+                } else if (collectData && isBoundaryMode && centerInside) {
                     // Circle fully inside polygon with no intersections in boundary mode: full circumference.
-                    const fullLength = 2 * Math.PI * r;
+                    const winding = centerWinding || 1;
+                    const fullLength = 2 * Math.PI * r * winding;
                     measure = fullLength;
                     sectors.push({
                         cx, cy, r,
                         startAngle: 0,
                         endAngle: 2 * Math.PI,
                         value: fullLength,
+                        winding,
                         fromEdge: 0, fromParam: 0, toEdge: 0, toParam: 0
                     });
-                } else if (isBoundaryMode && this.pointInPolygon(cx, cy, shapeVerts) && measure === 0) {
+                } else if (isBoundaryMode && centerInside && measure === 0) {
                     // Circle fully inside polygon without collectData
-                    return 2 * Math.PI * r;
+                    return 2 * Math.PI * r * (centerWinding || 1);
                 }
 
                 if (collectData) {
@@ -2653,102 +2694,92 @@
                 }
 
                 // Get overlap data
-                const result = this.overlapByBoundary(this.cx, this.cy, this.R, true);
-
-                if (!result.triangles && !result.sectors) {
-                    alert('No overlap to animate');
-                    return;
-                }
-
-                // Step 1: Prepare boundary elements
-                const elements = this.prepareBoundaryElements(
-                    result.triangles || [],
-                    result.sectors || []
-                );
-
-                if (elements.length === 0) {
-                    alert('No overlap elements found');
-                    return;
-                }
-
-                // DEBUG OUTPUT
-                console.log('\n========== ANIMATION DEBUG ==========');
-                console.log(`Circle: cx=${this.cx.toFixed(3)}, cy=${this.cy.toFixed(3)}, R=${this.R.toFixed(3)}`);
-                console.log(`\n--- ALL ELEMENTS (${elements.length}) ---`);
-                elements.forEach((elem, idx) => {
-                    const type = elem.type.charAt(0).toUpperCase();
-                    const measureVal = (elem.metric !== undefined ? elem.metric : (elem.data.value ?? elem.data.area ?? 0)).toFixed(4);
-                    console.log(`[${idx}] ${type} | start: ${elem.startPoint} | end: ${elem.endPoint} | value: ${measureVal}`);
-                });
-
-                // Step 2: Find connected components
-                const componentGroups = this.findConnectedComponents(elements);
-
-                console.log(`\n--- CONNECTED COMPONENTS (${componentGroups.length}) ---`);
-                componentGroups.forEach((group, compIdx) => {
-                    console.log(`Component ${compIdx}: ${group.length} elements`);
-                    console.log(`  Indices: [${group.join(', ')}]`);
-                });
-
-                // Step 3: Order each component and flatten into animation sequence
-                const animationSequence = [];
-
-                console.log('\n--- ORDERING WITHIN COMPONENTS ---');
-                for (let compIdx = 0; compIdx < componentGroups.length; compIdx++) {
-                    const componentIndices = componentGroups[compIdx];
-                    const orderedIndices = this.orderComponentBoundary(componentIndices, elements);
-
-                    console.log(`\nComponent ${compIdx}:`);
-                    console.log(`  Original: [${componentIndices.join(', ')}]`);
-                    console.log(`  Ordered:  [${orderedIndices.join(', ')}]`);
-
-                    // Show the trace
-                    console.log('  Trace:');
-                    orderedIndices.forEach((idx, pos) => {
-                        const elem = elements[idx];
-                        const type = elem.type.charAt(0).toUpperCase();
-                        console.log(`    ${pos}. [${idx}] ${type} ${elem.startPoint} -> ${elem.endPoint}`);
-                    });
-
-                    // Show geometric endpoints to verify continuity
-                    console.log('  Geometric Trace (boundary endpoints):');
-                    orderedIndices.forEach((idx, pos) => {
-                        const elem = elements[idx];
-                        const data = elem.data;
-
-                        if (elem.type === 'triangle') {
-                            // For triangles: p2 and p3 are the boundary edge endpoints
-                            const p2 = `(${data.p2.x.toFixed(3)}, ${data.p2.y.toFixed(3)})`;
-                            const p3 = `(${data.p3.x.toFixed(3)}, ${data.p3.y.toFixed(3)})`;
-                            console.log(`    ${pos}. T: ${p2} → ${p3}`);
-                        } else {
-                            // For sectors: compute arc endpoints
-                            const startX = data.cx + data.r * Math.cos(data.startAngle);
-                            const startY = data.cy + data.r * Math.sin(data.startAngle);
-                            const endX = data.cx + data.r * Math.cos(data.endAngle);
-                            const endY = data.cy + data.r * Math.sin(data.endAngle);
-                            const start = `(${startX.toFixed(3)}, ${startY.toFixed(3)})`;
-                            const end = `(${endX.toFixed(3)}, ${endY.toFixed(3)})`;
-                            console.log(`    ${pos}. S: ${start} → ${end}`);
+                // Phase 1: polygon trace (triangles from circle center to polygon edges, independent of circle clip)
+                const polygonComponents = [];
+                for (let i = 0; i < this.shapeVertices.length; i++) {
+                    const v1 = this.shapeVertices[i];
+                    const v2 = this.shapeVertices[(i + 1) % this.shapeVertices.length];
+                    const triArea = 0.5 * ((v1.x - this.cx) * (v2.y - this.cy) - (v1.y - this.cy) * (v2.x - this.cx));
+                    polygonComponents.push({
+                        type: 'triangle',
+                        phase: 'polygon',
+                        data: {
+                            p1: { x: this.cx, y: this.cy },
+                            p2: { x: v1.x, y: v1.y },
+                            p3: { x: v2.x, y: v2.y },
+                            value: triArea,
+                            labelPrefix: 'P'
                         }
                     });
-
-                    // Add elements from this component to the sequence
-                    for (const idx of orderedIndices) {
-                        animationSequence.push(elements[idx]);
-                    }
                 }
+
+                // Phase 2: clip each polygon triangle against the circle, decomposing into in-circle triangles + arc sectors
+                const overlapComponents = [];
+                let overlapAreaTotal = 0;
+
+                console.log('\n========== ANIMATION DEBUG ==========');
+                console.log(`Circle: cx=${this.cx.toFixed(3)}, cy=${this.cy.toFixed(3)}, R=${this.R.toFixed(3)}`);
+                console.log(`Polygon triangles: ${polygonComponents.length}`);
+
+                polygonComponents.forEach((comp, idx) => {
+                    const triVerts = [comp.data.p1, comp.data.p2, comp.data.p3];
+                    const clipped = this.overlapByBoundary(this.cx, this.cy, this.R, true, triVerts) || {};
+                    const triParts = clipped.triangles || [];
+                    const sectorParts = clipped.sectors || [];
+                    const totalParts = [...triParts, ...sectorParts];
+
+                    console.log(`\n-- Triangle ${idx} (${triParts.length} tris, ${sectorParts.length} sectors) --`);
+
+                    for (const t of triParts) {
+                        const val = t.value !== undefined ? t.value : (t.area || 0);
+                        overlapAreaTotal += val;
+                        overlapComponents.push({
+                            type: 'triangle',
+                            phase: 'overlap',
+                            data: { ...t, labelPrefix: 'T' }
+                        });
+                        console.log(`  T area=${val.toFixed(4)}`);
+                    }
+
+                    for (const s of sectorParts) {
+                        const val = s.value !== undefined ? s.value : (s.area || 0);
+                        overlapAreaTotal += val;
+                        overlapComponents.push({
+                            type: 'sector',
+                            phase: 'overlap',
+                            data: { ...s, labelPrefix: 'S' }
+                        });
+                        console.log(`  S area=${val.toFixed(4)} angles=(${s.startAngle.toFixed(3)}, ${s.endAngle.toFixed(3)})`);
+                    }
+
+                    if (totalParts.length === 0) {
+                        console.log('  (No overlap with circle)');
+                    }
+                });
+
+                // Build final sequence: polygon build, then a single overlap step showing the clipped region
+                const animationSequence = [
+                    ...polygonComponents,
+                    {
+                        type: 'overlapFinal',
+                        phase: 'overlap',
+                        data: { components: overlapComponents }
+                    }
+                ];
 
                 console.log(`\n--- FINAL ANIMATION SEQUENCE (${animationSequence.length}) ---`);
                 animationSequence.forEach((elem, pos) => {
                     const type = elem.type.charAt(0).toUpperCase();
                     const measureVal = (elem.metric !== undefined ? elem.metric : (elem.data.value ?? elem.data.area ?? 0)).toFixed(4);
-                    console.log(`${pos}. ${type} | ${elem.startPoint} -> ${elem.endPoint} | value: ${measureVal}`);
+                    console.log(`${pos}. ${type} | phase=${elem.phase || 'overlap'} | value: ${measureVal}`);
                 });
                 console.log('=====================================\n');
 
                 // Store animation data
                 this.animationComponents = animationSequence;
+                this.polygonComponentCount = polygonComponents.length;
+                this.overlapComponents = overlapComponents;
+                this.overlapAreaTotal = overlapAreaTotal;
                 this.animationStep = 0;
                 this.isAnimating = true;
 
@@ -2767,6 +2798,7 @@
                 this.isAnimating = false;
                 this.animationStep = 0;
                 this.animationComponents = [];
+                this.polygonComponentCount = 0;
 
                 if (this.animationTimerId) {
                     clearTimeout(this.animationTimerId);
@@ -2829,6 +2861,9 @@
                 if (!this.isAnimating || this.animationComponents.length === 0) return;
 
                 const ctx = this.ctx;
+                const polygonCount = this.polygonComponentCount || 0;
+                const overlapComponents = this.overlapComponents || [];
+                const overlapCount = overlapComponents.length;
                 let triangleCount = 0;
                 let sectorCount = 0;
                 let cumulativeArea = 0;
@@ -2837,53 +2872,76 @@
 
                 // STEP 1: Draw cumulative region
                 if (isCompletedStep) {
-                    // Final step: show all components as cumulative region
-                    this.drawCumulativeRegion(ctx, totalComponents);
+                    // Final linger: show completed overlap region
+                    this.drawCumulativeRegion(ctx, overlapCount, overlapComponents);
 
-                    // Calculate total area
-                    for (let i = 0; i < totalComponents; i++) {
-                        const component = this.animationComponents[i];
+                    // Calculate total area (overlap only)
+                    for (let i = 0; i < overlapCount; i++) {
+                        const component = overlapComponents[i];
                         const value = component.data.value !== undefined ?
                                     component.data.value :
                                     (component.data.area || 0);
                         cumulativeArea += value;
                     }
-                    triangleCount = this.animationComponents.filter(c => c.type === 'triangle').length;
-                    sectorCount = this.animationComponents.filter(c => c.type === 'sector').length;
+                    triangleCount = overlapComponents.filter(c => c.type === 'triangle').length;
+                    sectorCount = overlapComponents.filter(c => c.type === 'sector').length;
                 } else {
-                    // Normal steps: show cumulative up to but NOT including current
-                    if (this.animationStep > 1) {
-                        this.drawCumulativeRegion(ctx, this.animationStep - 1);
-
-                        // Calculate cumulative area
-                        for (let i = 0; i < this.animationStep - 1; i++) {
-                            const component = this.animationComponents[i];
-                            const value = component.data.value !== undefined ?
-                                        component.data.value :
-                                        (component.data.area || 0);
-                            cumulativeArea += value;
-                        }
-                    }
-
-                    // STEP 2: Draw current component being added (highlighted)
                     if (this.animationStep > 0 && this.animationStep <= totalComponents) {
-                        const currentIdx = this.animationStep - 1;
-                        const component = this.animationComponents[currentIdx];
+                        if (this.animationStep <= polygonCount) {
+                            // Polygon tracing phase: cumulative fill of previous triangles + highlighted current
+                            const polyComponents = this.animationComponents.slice(0, polygonCount);
+                            const currentIdx = this.animationStep - 1;
 
-                        if (component.type === 'triangle') {
-                            triangleCount = this.animationComponents.slice(0, this.animationStep)
-                                               .filter(c => c.type === 'triangle').length;
-                            this.drawAnimatedTriangle(ctx, component.data, true, triangleCount);
-                        } else if (component.type === 'sector') {
-                            sectorCount = this.animationComponents.slice(0, this.animationStep)
-                                             .filter(c => c.type === 'sector').length;
-                            this.drawAnimatedSector(ctx, component.data, true, sectorCount);
+                            if (currentIdx > 0) {
+                                this.drawCumulativeRegion(ctx, currentIdx, polyComponents);
+                                for (let i = 0; i < currentIdx; i++) {
+                                    const component = polyComponents[i];
+                                    const value = component.data.value !== undefined ?
+                                                component.data.value :
+                                                (component.data.area || 0);
+                                    cumulativeArea += value;
+                                }
+                            }
+
+                            // Highlight the newest triangle
+                            const currentTri = polyComponents[currentIdx];
+                            this.drawAnimatedTriangle(ctx, currentTri.data, true, currentIdx + 1);
+                        } else {
+                            // Single overlap step: show faint polygon then full clipped region
+                            const polyComponents = this.animationComponents.slice(0, polygonCount);
+                            ctx.save();
+                            ctx.globalAlpha = 0.25;
+                            this.drawCumulativeRegion(ctx, polygonCount, polyComponents);
+                            ctx.restore();
+
+                            this.drawCumulativeRegion(ctx, overlapCount, overlapComponents);
+
+                            // Overlap stats
+                            for (let i = 0; i < overlapCount; i++) {
+                                const component = overlapComponents[i];
+                                const value = component.data.value !== undefined ?
+                                            component.data.value :
+                                            (component.data.area || 0);
+                                cumulativeArea += value;
+                            }
+                            triangleCount = overlapComponents.filter(c => c.type === 'triangle').length;
+                            sectorCount = overlapComponents.filter(c => c.type === 'sector').length;
                         }
                     }
                 }
 
                 // Draw progress info with running total
-                this.drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea);
+                const phase = (this.animationStep > 0 && this.animationStep <= polygonCount)
+                    ? 'polygon'
+                    : (isCompletedStep ? 'final' : 'overlap');
+                const overlapStep = Math.max(0, this.animationStep - polygonCount);
+                this.drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea, {
+                    phase,
+                    polygonStep: Math.min(this.animationStep, polygonCount),
+                    polygonTotal: polygonCount,
+                    overlapStep,
+                    overlapTotal: overlapCount
+                });
             }
 
             /**
@@ -3111,13 +3169,13 @@
              * Colors by net winding: positive = blue, negative = red, zero = transparent.
              * Intensity increases with |winding|.
              */
-            drawCumulativeRegion(ctx, upToStep) {
+            drawCumulativeRegion(ctx, upToStep, components = this.animationComponents) {
                 if (upToStep <= 0) return;
 
                 // Collect all polygons with their winding contribution
                 const polys = [];
-                for (let i = 0; i < upToStep && i < this.animationComponents.length; i++) {
-                    const component = this.animationComponents[i];
+                for (let i = 0; i < upToStep && i < components.length; i++) {
+                    const component = components[i];
                     const value = component.data.value !== undefined
                         ? component.data.value
                         : (component.data.area || 0);
@@ -3229,6 +3287,7 @@
                 const isPositive = value >= 0;
                 const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
                 const highlightColor = isPositive ? '#0080FF' : '#FF4000';
+                const labelPrefix = tri.labelPrefix || 'T';
 
                 ctx.fillStyle = isCurrent ? `rgba(${baseColor}, 0.7)` : `rgba(${baseColor}, 0.4)`;
                 ctx.strokeStyle = isCurrent ? highlightColor : `rgba(${baseColor}, 0.6)`;
@@ -3249,7 +3308,7 @@
                     ctx.strokeStyle = '#000000';
                     ctx.lineWidth = 3;
                     ctx.font = 'bold 14px monospace';
-                    const label = `T${index}: ${value.toFixed(4)}`;
+                    const label = `${labelPrefix}${index}: ${value.toFixed(4)}`;
                     ctx.strokeText(label, centerX - 40, centerY);
                     ctx.fillText(label, centerX - 40, centerY);
                 }
@@ -3267,14 +3326,20 @@
                 const isPositive = value >= 0;
                 const baseColor = isPositive ? '0, 128, 255' : '255, 64, 0';
                 const highlightColor = isPositive ? '#0080FF' : '#FF4000';
+                const labelPrefix = sec.labelPrefix || 'S';
 
                 ctx.fillStyle = isCurrent ? `rgba(${baseColor}, 0.7)` : `rgba(${baseColor}, 0.4)`;
                 ctx.strokeStyle = isCurrent ? highlightColor : `rgba(${baseColor}, 0.6)`;
                 ctx.lineWidth = isCurrent ? 3 : 2;
 
+                const clockwise = (sec.winding !== undefined ? sec.winding : value) < 0;
+                const startAngle = -sec.startAngle;
+                const endAngle = -sec.endAngle;
+                const drawCounterClockwise = !clockwise;
+
                 ctx.beginPath();
                 ctx.moveTo(center.x, center.y);
-                ctx.arc(center.x, center.y, radius, -sec.startAngle, -sec.endAngle, true);
+                ctx.arc(center.x, center.y, radius, startAngle, endAngle, drawCounterClockwise);
                 ctx.closePath();
                 ctx.fill();
                 ctx.stroke();
@@ -3288,7 +3353,7 @@
                     ctx.strokeStyle = '#000000';
                     ctx.lineWidth = 3;
                     ctx.font = 'bold 14px monospace';
-                    const label = `S${index}: ${value.toFixed(4)}`;
+                    const label = `${labelPrefix}${index}: ${value.toFixed(4)}`;
                     ctx.strokeText(label, labelX - 40, labelY);
                     ctx.fillText(label, labelX - 40, labelY);
                 }
@@ -3298,30 +3363,31 @@
              * Draw animation progress information
              * Shows step number, component counts, and running total area
              */
-            drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea) {
-                const totalTriangles = this.animationComponents.filter(c => c.type === 'triangle').length;
-                const totalSectors = this.animationComponents.filter(c => c.type === 'sector').length;
+            drawAnimationProgress(ctx, triangleCount, sectorCount, cumulativeArea, opts = {}) {
+                const { phase = 'overlap', polygonStep = 0, polygonTotal = 0, overlapStep = 0, overlapTotal = 0 } = opts;
+                const overlapComponents = this.overlapComponents || [];
+                const totalTriangles = overlapComponents.filter(c => c.type === 'triangle').length;
+                const totalSectors = overlapComponents.filter(c => c.type === 'sector').length;
 
                 ctx.fillStyle = '#FF9800';
                 ctx.font = 'bold 16px monospace';
 
                 if (this.animationStep > 0 && this.animationStep <= this.animationComponents.length) {
                     ctx.fillText(`Step ${this.animationStep} / ${this.animationComponents.length}`, 10, 85);
-                    ctx.fillText(`Triangles: ${triangleCount}/${totalTriangles}, Sectors: ${sectorCount}/${totalSectors}`, 10, 105);
 
-                    // Show cumulative area + current component value
-                    const currentComponent = this.animationComponents[this.animationStep - 1];
-                    const currentValue = currentComponent.data.value !== undefined ?
-                                       currentComponent.data.value :
-                                       (currentComponent.data.area || 0);
-                    const totalSoFar = cumulativeArea + currentValue;
+                    if (phase === 'polygon') {
+                        ctx.fillText(`Polygon trace: ${polygonStep}/${polygonTotal}`, 10, 105);
+                        ctx.fillStyle = '#4CAF50';
+                        ctx.fillText(`Poly sum: ${cumulativeArea.toFixed(5)}`, 10, 125);
+                        return;
+                    }
 
-                    ctx.fillStyle = '#4CAF50';  // Green for cumulative
-                    ctx.fillText(`Previous sum: ${cumulativeArea.toFixed(5)}`, 10, 125);
-                    ctx.fillStyle = currentValue >= 0 ? '#0080FF' : '#FF4000';  // Blue/red for current
-                    ctx.fillText(`Adding: ${currentValue >= 0 ? '+' : ''}${currentValue.toFixed(5)}`, 10, 145);
-                    ctx.fillStyle = '#9C27B0';  // Purple for total
-                    ctx.fillText(`New total: ${totalSoFar.toFixed(5)}`, 10, 165);
+                    ctx.fillText(`Overlap (single step)`, 10, 105);
+                    ctx.fillText(`Triangles: ${triangleCount}/${totalTriangles}, Sectors: ${sectorCount}/${totalSectors}`, 10, 125);
+
+                    const total = this.overlapAreaTotal !== undefined ? this.overlapAreaTotal : cumulativeArea;
+                    ctx.fillStyle = '#9C27B0';
+                    ctx.fillText(`Overlap total: ${total.toFixed(5)}`, 10, 145);
                 }
             }
 
