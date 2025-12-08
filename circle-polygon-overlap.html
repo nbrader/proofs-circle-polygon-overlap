@@ -572,27 +572,21 @@
                 });
 
                 document.getElementById('scale').addEventListener('input', (e) => {
-                    this.pauseAnimationForParamChange();
                     this.scale = parseFloat(e.target.value);
                     document.getElementById('scaleValue').textContent = this.scale;
                     this.updateDisplay();
-                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('panX').addEventListener('input', (e) => {
-                    this.pauseAnimationForParamChange();
                     this.panX = parseFloat(e.target.value);
                     document.getElementById('panXValue').textContent = this.panX.toFixed(2);
                     this.updateDisplay();
-                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('panY').addEventListener('input', (e) => {
-                    this.pauseAnimationForParamChange();
                     this.panY = parseFloat(e.target.value);
                     document.getElementById('panYValue').textContent = this.panY.toFixed(2);
                     this.updateDisplay();
-                    this.scheduleAnimationRestart();
                 });
 
                 document.getElementById('resolution').addEventListener('input', (e) => {
@@ -1048,7 +1042,6 @@
                 // Mouse wheel zoom
                 this.canvas2d.addEventListener('wheel', (e) => {
                     e.preventDefault();
-                    this.pauseAnimationForParamChange();
                     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
                     const newScale = Math.max(10, Math.min(500, this.scale * zoomFactor));
 
@@ -1073,7 +1066,6 @@
                     document.getElementById('panYValue').textContent = this.panY.toFixed(2);
 
                     this.updateDisplay();
-                    this.scheduleAnimationRestart();
                 });
             }
 
