@@ -61,6 +61,9 @@
             border: 2px solid #333;
             display: block;
             background: white;
+            width: 100%;
+            height: auto;
+            max-width: 600px;
         }
         .info {
             margin: 10px 0;
@@ -184,6 +187,20 @@
             font-size: 12px;
             color: #555;
         }
+        @media (max-width: 900px) {
+            body {
+                padding: 12px;
+            }
+            .container {
+                padding: 16px;
+            }
+            .canvas-container {
+                flex-direction: column;
+            }
+            .canvas-wrapper {
+                min-width: 0;
+            }
+        }
     </style>
 </head>
 <body>
@@ -192,8 +209,8 @@
 
         <div class="note">
             <strong>General overlap problem:</strong> Compute the overlap area between a circle of arbitrary radius and various polygon shapes (single or multiple polygons).<br>
-            Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the shape and circle indicators at that offset). The 3D view is this same kernel over a grid of centers.
-            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the shape. Switch to boundary mode to sum arc lengths instead of areas—the highlighted arc labels show each contributing perimeter segment.
+            Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the shape and circle indicators at that offset). The 3D view is this same kernel over a grid of centers.<br>
+            <br><em>Touch:</em> tap/drag the circle, pinch to zoom, two-finger pan, double-tap to finish drawing. <em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the shape. Switch to boundary mode to sum arc lengths instead of areas—the highlighted arc labels show each contributing perimeter segment.
         </div>
 
         <div class="controls">
@@ -451,6 +468,12 @@
                 this.wasAnimatingBeforeDrag = false;
                 this.wasAnimatingBeforeParamChange = false;
                 this.restartAnimationTimer = null;
+
+                // Touch / pointer gesture state
+                this.activePointers = new Map();
+                this.pinchBase = null;
+                this.dragPointerId = null;
+                this.lastTapTime = 0;
 
                 // Shape properties
                 this.shapeType = 'square';
@@ -988,83 +1011,170 @@
             }
 
             setup2DCanvas() {
-                this.canvas2d.addEventListener('mousedown', (e) => {
-                    const rect = this.canvas2d.getBoundingClientRect();
-                    const px = e.clientX - rect.left;
-                    const py = e.clientY - rect.top;
-                    const world = this.pixelToWorld(px, py);
+                const canvas = this.canvas2d;
 
-                    // Handle polygon drawing mode
+                const updatePointer = (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    return {
+                        px: e.clientX - rect.left,
+                        py: e.clientY - rect.top
+                    };
+                };
+
+                const startPinchGesture = () => {
+                    if (this.activePointers.size < 2) {
+                        this.pinchBase = null;
+                        return;
+                    }
+                    const pts = Array.from(this.activePointers.values());
+                    const [p1, p2] = pts;
+                    const dx = p2.px - p1.px;
+                    const dy = p2.py - p1.py;
+                    const dist = Math.hypot(dx, dy);
+                    const centerPx = { x: (p1.px + p2.px) / 2, y: (p1.py + p2.py) / 2 };
+                    this.pinchBase = {
+                        initialScale: this.scale,
+                        initialPanX: this.panX,
+                        initialPanY: this.panY,
+                        initialDist: dist,
+                        centerPx
+                    };
+                };
+
+                canvas.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    canvas.setPointerCapture(e.pointerId);
+                    const pos = updatePointer(e);
+                    this.activePointers.set(e.pointerId, pos);
+
+                    // Two-finger gestures: start pinch/pan baseline
+                    if (this.activePointers.size === 2) {
+                        startPinchGesture();
+                    }
+
+                    // Polygon drawing mode
                     if (this.isDrawingPolygon) {
+                        const now = Date.now();
+                        const world = this.pixelToWorld(pos.px, pos.py);
                         this.polygonVertices.push([world.x, world.y]);
-                        this.updateDisplay();
+
+                        // Double-tap to finish on touch
+                        if (now - this.lastTapTime < 350 && this.polygonVertices.length >= 3) {
+                            this.finishPolygonDrawing();
+                        } else {
+                            this.updateDisplay();
+                        }
+                        this.lastTapTime = now;
                         return;
                     }
 
-                    // Handle circle dragging mode
-                    const dx = world.x - this.cx;
-                    const dy = world.y - this.cy;
-                    if (dx * dx + dy * dy <= this.R * this.R) {
-                        this.isDragging = true;
+                    // Single-pointer circle drag
+                    if (this.activePointers.size === 1) {
+                        const world = this.pixelToWorld(pos.px, pos.py);
+                        const dx = world.x - this.cx;
+                        const dy = world.y - this.cy;
+                        if (dx * dx + dy * dy <= this.R * this.R) {
+                            this.isDragging = true;
+                            this.dragPointerId = e.pointerId;
 
-                        // Stop animation during drag
-                        if (this.isAnimating) {
-                            this.wasAnimatingBeforeDrag = true;
-                            this.stopAnimation();
+                            if (this.isAnimating) {
+                                this.wasAnimatingBeforeDrag = true;
+                                this.stopAnimation();
+                            }
                         }
                     }
                 });
 
-                // Double-click to finish polygon drawing
-                this.canvas2d.addEventListener('dblclick', (e) => {
+                // Double-click to finish polygon drawing (desktop)
+                canvas.addEventListener('dblclick', (e) => {
                     if (this.isDrawingPolygon && this.polygonVertices.length >= 3) {
                         e.preventDefault();
                         this.finishPolygonDrawing();
                     }
                 });
 
-                this.canvas2d.addEventListener('mousemove', (e) => {
-                    if (this.isDragging) {
-                        const rect = this.canvas2d.getBoundingClientRect();
-                        const px = e.clientX - rect.left;
-                        const py = e.clientY - rect.top;
-                        const world = this.pixelToWorld(px, py);
+                canvas.addEventListener('pointermove', (e) => {
+                    e.preventDefault();
+                    const pos = updatePointer(e);
+                    if (!this.activePointers.has(e.pointerId)) return;
+                    this.activePointers.set(e.pointerId, pos);
+
+                    // Pinch zoom + two-finger pan
+                    if (this.pinchBase && this.activePointers.size >= 2) {
+                        const pts = Array.from(this.activePointers.values());
+                        const [p1, p2] = pts;
+                        const dx = p2.px - p1.px;
+                        const dy = p2.py - p1.py;
+                        const dist = Math.hypot(dx, dy);
+                        const centerPx = { x: (p1.px + p2.px) / 2, y: (p1.py + p2.py) / 2 };
+
+                        if (this.pinchBase.initialDist > 0) {
+                            const zoom = dist / this.pinchBase.initialDist;
+                            const newScale = Math.max(10, Math.min(500, this.pinchBase.initialScale * zoom));
+                            this.scale = newScale;
+                            document.getElementById('scale').value = newScale;
+                            document.getElementById('scaleValue').textContent = newScale.toFixed(0);
+
+                            const deltaPx = {
+                                x: centerPx.x - this.pinchBase.centerPx.x,
+                                y: centerPx.y - this.pinchBase.centerPx.y
+                            };
+                            this.panX = this.pinchBase.initialPanX - deltaPx.x / this.scale;
+                            this.panY = this.pinchBase.initialPanY + deltaPx.y / this.scale;
+
+                            document.getElementById('panX').value = this.panX;
+                            document.getElementById('panXValue').textContent = this.panX.toFixed(2);
+                            document.getElementById('panY').value = this.panY;
+                            document.getElementById('panYValue').textContent = this.panY.toFixed(2);
+                        }
+
+                        this.updateDisplay();
+                        return;
+                    }
+
+                    // Single-finger circle drag
+                    if (this.isDragging && this.dragPointerId === e.pointerId) {
+                        const world = this.pixelToWorld(pos.px, pos.py);
                         this.cx = world.x;
                         this.cy = world.y;
                         this.updateDisplay();
                     }
                 });
 
-                this.canvas2d.addEventListener('mouseup', () => {
-                    if (this.isDragging) {
+                const stopDraggingIfNeeded = (pointerId) => {
+                    if (this.isDragging && this.dragPointerId === pointerId) {
                         this.isDragging = false;
-                        // Restart animation if it was running before drag
+                        this.dragPointerId = null;
                         if (this.wasAnimatingBeforeDrag) {
                             this.wasAnimatingBeforeDrag = false;
                             this.startAnimation();
                         }
                     }
-                });
+                };
 
-                this.canvas2d.addEventListener('mouseleave', () => {
-                    if (this.isDragging) {
-                        this.isDragging = false;
-                        // Restart animation if it was running before drag
-                        if (this.wasAnimatingBeforeDrag) {
-                            this.wasAnimatingBeforeDrag = false;
-                            this.startAnimation();
-                        }
+                const endPointer = (e) => {
+                    if (this.activePointers.has(e.pointerId)) {
+                        this.activePointers.delete(e.pointerId);
                     }
-                });
+                    canvas.releasePointerCapture(e.pointerId);
+                    stopDraggingIfNeeded(e.pointerId);
+                    if (this.activePointers.size < 2) {
+                        this.pinchBase = null;
+                    }
+                };
 
-                // Mouse wheel zoom
-                this.canvas2d.addEventListener('wheel', (e) => {
+                canvas.addEventListener('pointerup', endPointer);
+                canvas.addEventListener('pointercancel', endPointer);
+                canvas.addEventListener('pointerout', endPointer);
+
+                // Mouse wheel zoom (desktop)
+                canvas.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
                     const newScale = Math.max(10, Math.min(500, this.scale * zoomFactor));
 
                     // Get mouse position before zoom
-                    const rect = this.canvas2d.getBoundingClientRect();
+                    const rect = canvas.getBoundingClientRect();
                     const px = e.clientX - rect.left;
                     const py = e.clientY - rect.top;
                     const worldBefore = this.pixelToWorld(px, py);
