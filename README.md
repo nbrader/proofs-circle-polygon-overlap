@@ -24,6 +24,8 @@ A fully interactive web application that visualizes polygon-circle overlap in bo
 **Features:**
 - **Multiple shapes:** Square, rectangle, triangle, pentagon, hexagon, octagon,
   custom polygons (draw your own or define via JSON)
+- **Multi-polygon management:** Add/remove polygons with independent colors and
+  per-polygon overlap metrics plus combined totals
 - **2D interactive view:** Drag the circle center, zoom/pan with mouse wheel,
   see real-time overlap area calculation with visual decomposition into triangles
   and sectors
@@ -31,6 +33,8 @@ A fully interactive web application that visualizes polygon-circle overlap in bo
   all possible circle center positions (red/blue axes = inputs, green axis = overlap area)
 - **Animated overlap tracing:** Step-by-step visualization of the boundary-walk
   algorithm showing how triangles and sectors are computed
+- **Boundary mode:** Toggle to compute circle perimeter length inside polygons,
+  with per-arc length annotations overlaid on the 2D view
 - **Exact geometric tests:** Uses precise point-to-segment distance calculations
   (not sampling) for numerical stability—eliminates flickering spikes when
   adjusting parameters
@@ -194,16 +198,17 @@ project compiles.
 
 ## Roadmap
 
-See `ROADMAP.md` for the full development roadmap. Key planned features:
+See `ROADMAP.md` for the full development roadmap. Highlights:
 
-- **Multi-polygon support:** Compute overlap with multiple polygons simultaneously
-- **Circle boundary mode:** Calculate perimeter length inside polygons (arc lengths
-  instead of area)
+- **Multi-polygon + boundary mode:** Already available in the viewer with per-polygon
+  stats and arc-length labels
 - **Performance optimizations:** For complex polygons with many vertices
 - **Extended formal verification:** Proofs for additional geometric configurations
 
 ## Recent improvements
 
+- Added multi-polygon list management, per-polygon metrics, and boundary-length
+  mode with arc annotations in the HTML viewer
 - Replaced unreliable 8-point circle sampling with exact geometric distance tests
   to eliminate numerical spikes and ensure stable behavior across all radius values
 - Implemented precise point-to-segment distance calculations for special case detection

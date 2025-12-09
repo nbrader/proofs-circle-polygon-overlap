@@ -31,26 +31,26 @@ Resolved Issues:
   This eliminates numerical spikes and ensures stable behavior across all radius values.
 - Point 2 (PARTIALLY ADDRESSED): Added exact geometric tests for special cases. Further epsilon tolerance improvements may be needed for general intersection cases.
 
-Planned Enhancements:
-=====================
+Implemented Enhancements:
+=========================
 
 1. Multi-Polygon Overlap
    - Input: Array of polygons [P₁, P₂, ..., Pₙ] and circle C
-   - Output: Array of overlap areas [A₁, A₂, ..., Aₙ] for each polygon
-   - Algorithm: Apply boundary-walk independently to each polygon
-   - Future extension: Compute overlap with union of polygon interiors (requires
-     polygon boolean operations to compute ∪Pᵢ first)
+   - Output: Array of overlap areas [A₁, A₂, ..., Aₙ] for each polygon plus combined total
+   - Algorithm: Apply boundary-walk independently to each polygon (winding numbers add naturally)
+   - UI: Polygon list panel with color-coded shapes and per-polygon metrics
 
 2. Circle Boundary Mode (Perimeter Overlap)
    - Metric: Total arc length of circle perimeter inside polygon interior(s)
    - Formula: L = Σ θᵢ · R for arc angles θᵢ inside polygon
    - Algorithm modification:
-     * Find circle-polygon intersections (same as current)
-     * For each arc segment, check if midpoint inside polygon
-     * Sum arc lengths instead of sector areas
-   - Use cases: Perimeter-based measurements, boundary exposure calculations
+     * Find circle-polygon intersections (same as area mode)
+     * For each arc segment, check if midpoint is inside polygon
+     * Sum arc lengths instead of sector areas; preserve winding for orientation
+   - UI: Mode toggle plus arc-length annotations on contributing circle segments
 
-3. Algorithmic Considerations for Extensions
-   - Multi-polygon: O(n·k) where n = total vertices, k = number of polygons
-   - Boundary mode: Same complexity as area mode, simpler final calculation
-   - Both extensions reuse the core intersection-finding and inside-polygon tests
+Future Considerations:
+======================
+- Union of multiple polygon interiors for a single overlap measure (requires polygon boolean ops)
+- Performance tuning: bounding-box culling, spatial indices for segment-circle intersection
+- Numerical refinements: tighter epsilons for intersection degeneracies in highly skewed polygons

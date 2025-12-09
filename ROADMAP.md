@@ -15,6 +15,16 @@ Development roadmap for circle-polygon-overlap.
 - Haskell implementation for numerical experimentation
 - Python sanity checks against numerical integration
 
+### Multi-Polygon Support
+- Add/remove polygons with independent colors
+- Combined overlap and per-polygon totals displayed in the viewer
+- Works with all existing shapes (regular and custom)
+
+### Boundary Mode (Circle Perimeter)
+- Toggle between interior area and perimeter overlap
+- Arc-length annotations on contributing circle segments
+- 3D surface plot normalizes height by circumference in this mode
+
 ## In Progress
 
 ### Square-Circle Formal Verification (Rocq)
@@ -24,32 +34,6 @@ Development roadmap for circle-polygon-overlap.
 - Target: Rocq 8.20+
 
 ## Planned
-
-### Multi-Polygon Overlap Calculation
-Compute overlap areas for multiple polygons simultaneously.
-
-**Approach:**
-- Accept array of polygons as input
-- Apply boundary-walk algorithm to each polygon independently
-- Return array of individual overlap areas plus total
-
-**UI Changes:**
-- Polygon list management panel
-- Visual distinction between polygons (different colors)
-- Individual and combined area display
-
-### Circle Boundary Mode
-Toggle between computing interior area overlap vs perimeter length inside polygon.
-
-**Algorithm:**
-- Use same intersection-finding logic
-- Sum arc lengths (θ · R) instead of sector areas
-- Same complexity, different final calculation
-
-**UI Changes:**
-- Mode toggle: "Interior overlap" / "Boundary overlap"
-- Highlight boundary segments inside polygons
-- Arc length annotations
 
 ### Performance Optimizations
 For complex polygons with many vertices:

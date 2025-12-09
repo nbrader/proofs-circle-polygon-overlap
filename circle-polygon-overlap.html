@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Circle-Square Overlap (Normalized)</title>
+    <title>Circle-Polygon Overlap Explorer</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -188,12 +188,12 @@
 </head>
 <body>
     <div class="container">
-        <h1>Circle-Shape Overlap Explorer</h1>
+        <h1>Circle-Polygon Overlap Explorer</h1>
 
         <div class="note">
-            <strong>General overlap problem:</strong> Compute the overlap area between a circle of arbitrary radius and various polygon shapes.<br>
+            <strong>General overlap problem:</strong> Compute the overlap area between a circle of arbitrary radius and various polygon shapes (single or multiple polygons).<br>
             Drag the circle to explore. The app samples the overlap kernel A(cx, cy) = ∫1_S · 1_C(·−(cx, cy)) (i.e., the convolution of the shape and circle indicators at that offset). The 3D view is this same kernel over a grid of centers.
-            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the shape. This boundary-walk pattern generalizes to other polygon/shape overlaps by swapping in their boundary primitives and intersection tests.
+            <br><br><em>Algorithm:</em> compute segment–circle intersections, sum signed triangle areas for edge portions inside the circle, and add circular sector areas for arc portions inside the shape. Switch to boundary mode to sum arc lengths instead of areas—the highlighted arc labels show each contributing perimeter segment.
         </div>
 
         <div class="controls">
@@ -280,6 +280,10 @@
                     <option value="area">Interior Area</option>
                     <option value="perimeter">Boundary Length (Arc inside polygon)</option>
                 </select>
+            </div>
+            <div class="control-group" id="arcLabelsControl">
+                <label for="showArcLabels">Arc Length Labels:</label>
+                <input type="checkbox" id="showArcLabels" checked>
             </div>
             <div class="control-group">
                 <button id="drawPolygonBtn" style="padding: 8px 16px; font-size: 14px; cursor: pointer;">
@@ -459,6 +463,7 @@
 
                 // Calculation mode: 'area' for interior overlap, 'perimeter' for arc length inside polygon
                 this.boundaryMode = 'area';
+                this.showArcLabels = true;
 
                 this.updateShapeVertices();
                 this.initializePolygonList();
@@ -614,10 +619,24 @@
                 document.getElementById('boundaryMode').addEventListener('change', (e) => {
                     this.pauseAnimationForParamChange();
                     this.boundaryMode = e.target.value;
+                    const arcCtrl = document.getElementById('arcLabelsControl');
+                    if (arcCtrl) {
+                        arcCtrl.style.display = this.boundaryMode === 'perimeter' ? 'flex' : 'none';
+                    }
                     this.updateDisplay();
                     this.update3DSurface();
                     this.scheduleAnimationRestart();
                 });
+
+                document.getElementById('showArcLabels').addEventListener('change', (e) => {
+                    this.showArcLabels = e.target.checked;
+                    this.updateDisplay();
+                });
+
+                const arcCtrl = document.getElementById('arcLabelsControl');
+                if (arcCtrl) {
+                    arcCtrl.style.display = this.boundaryMode === 'perimeter' ? 'flex' : 'none';
+                }
 
                 document.getElementById('autoRotate').addEventListener('change', (e) => {
                     if (this.controls) {
@@ -2316,6 +2335,32 @@
                             ctx.beginPath();
                             ctx.arc(circleCenter.x, circleCenter.y, circleRadius, -sec.startAngle, -sec.endAngle, true);
                             ctx.stroke();
+
+                            if (this.showArcLabels && sec && typeof sec.startAngle === 'number' && typeof sec.endAngle === 'number') {
+                                const delta = sec.endAngle - sec.startAngle;
+                                if (Math.abs(delta) > 1e-6) {
+                                    const winding = sec.winding !== undefined ? sec.winding : 1;
+                                    const arcLength = Math.abs(sec.value !== undefined ? sec.value : (this.R * delta * winding));
+                                    const midAngle = sec.startAngle + delta / 2;
+                                    const labelRadius = this.R * 1.05;
+                                    const labelWorld = {
+                                        x: this.cx + labelRadius * Math.cos(midAngle),
+                                        y: this.cy + labelRadius * Math.sin(midAngle)
+                                    };
+                                    const labelPixel = this.worldToPixel(labelWorld.x, labelWorld.y);
+                                    const text = `${arcLength.toFixed(3)}${winding !== 1 ? ` (w=${winding})` : ''}`;
+
+                                    ctx.save();
+                                    ctx.font = '12px monospace';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.strokeStyle = 'white';
+                                    ctx.lineWidth = 3;
+                                    ctx.strokeText(text, labelPixel.x + 8, labelPixel.y);
+                                    ctx.fillStyle = poly.color;
+                                    ctx.fillText(text, labelPixel.x + 8, labelPixel.y);
+                                    ctx.restore();
+                                }
+                            }
                         });
                     } else {
                         ctx.save();
@@ -2356,10 +2401,21 @@
                         this.R,
                         poly.vertices,
                         poly.shapeType,
-                        { recordDebug: i === this.activePolygonIndex, shapeMeta: poly }
+                        {
+                            recordDebug: i === this.activePolygonIndex,
+                            shapeMeta: poly,
+                            collectData: this.boundaryMode === 'perimeter'
+                        }
                     );
-                    const value = typeof result === 'number' ? result : (result?.value ?? 0);
-                    perPolygon.push({ poly, value });
+                    let value = 0;
+                    let sectors = [];
+                    if (typeof result === 'number') {
+                        value = result;
+                    } else if (result) {
+                        value = result.value ?? 0;
+                        sectors = result.sectors || [];
+                    }
+                    perPolygon.push({ poly, value, sectors });
                 }
 
                 const totalOverlap = perPolygon.reduce((acc, item) => acc + item.value, 0);
@@ -2428,7 +2484,7 @@
                 const isBoundaryMode = this.boundaryMode === 'perimeter';
                 const metricName = isBoundaryMode ? 'length' : 'area';
 
-                stats.forEach(({ poly, value }) => {
+                stats.forEach(({ poly, value, sectors }) => {
                     const card = document.createElement('div');
                     card.className = 'polygon-stat-card';
 
@@ -2455,6 +2511,12 @@
                     card.appendChild(header);
                     card.appendChild(valueLine);
                     card.appendChild(percentLine);
+                    if (isBoundaryMode) {
+                        const arcCount = sectors ? sectors.length : 0;
+                        const arcLine = document.createElement('div');
+                        arcLine.textContent = `Arc segments: ${arcCount}`;
+                        card.appendChild(arcLine);
+                    }
                     grid.appendChild(card);
                 });
             }
