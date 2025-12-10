@@ -64,6 +64,7 @@
             width: 100%;
             height: auto;
             max-width: 600px;
+            touch-action: none; /* prevent browser scrolling during drag/pinch */
         }
         .info {
             margin: 10px 0;
@@ -1165,7 +1166,6 @@
 
                 canvas.addEventListener('pointerup', endPointer);
                 canvas.addEventListener('pointercancel', endPointer);
-                canvas.addEventListener('pointerout', endPointer);
 
                 // Mouse wheel zoom (desktop)
                 canvas.addEventListener('wheel', (e) => {
