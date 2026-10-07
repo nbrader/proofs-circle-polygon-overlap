@@ -14,7 +14,8 @@ the overlap region into signed triangles and circular sectors.
 
 **Square-circle verification:** As a formally verified special case, the project
 includes Rocq proofs for a circle and axis-aligned square (both centered at the
-origin), demonstrating the 8-case geometric decomposition.
+origin): a closed-form overlap area, proved equal to the double integral of the
+overlap region, together with its bounds and continuity.
 
 ## Interactive visualization: `circle-polygon-overlap.html`
 
@@ -134,7 +135,8 @@ The general polygon algorithm unifies these cases through the boundary-walk appr
 - **`ROADMAP.md`** – planned features and development roadmap
 - **`Rocq/`** – formal verification (square-circle special case)
   - `CirclePolygonOverlap.v`: definitions of geometric primitives (sectors,
-    triangles, segment areas), the 8-case analysis, and the main area formula
+    triangles, segment areas), the three-regime area formula for the centered
+    case, and proofs of its correctness, bounds and continuity
   - `_CoqProject`: logical load paths (`-Q . CirclePolygonOverlap`) and file list
 - **`Haskell/`** – reference implementation for numerical experimentation
   - `CirclePolygonOverlap.hs`: general polygon overlap calculations
@@ -152,7 +154,8 @@ make                    # compiles all .v files
 make clean              # remove artifacts
 ```
 
-The project targets Rocq 8.20+ (Coq 8.20+). All files live under the
+The proofs build with Rocq 9.0 and need the Coquelicot real-analysis library
+(tested with 3.4.4; `opam install coq-coquelicot`). All files live under the
 `CirclePolygonOverlap` namespace as configured in `_CoqProject`.
 
 ## Haskell quick start
@@ -184,8 +187,9 @@ to ensure correctness before formalizing in Rocq.
 - **Interactive visualization (`circle-polygon-overlap.html`):** Fully functional
   with support for arbitrary polygons, exact geometric tests, and smooth numerical
   behavior across all parameter ranges
-- **Rocq formal proofs (`Rocq/CirclePolygonOverlap.v`):** Under active development,
-  focusing on the 8-case square-circle decomposition
+- **Rocq formal proofs (`Rocq/CirclePolygonOverlap.v`):** Complete for the
+  centered square-circle case, with no admitted proofs or project axioms; the
+  off-center 8-case configuration is not yet formalized
 - **Haskell and Python implementations:** Serve as numerical references for
   validating the geometric formulas
 - **General polygon algorithm:** Implemented and tested in the HTML viewer;

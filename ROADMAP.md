@@ -25,13 +25,11 @@ Development roadmap for circle-polygon-overlap.
 - Arc-length annotations on contributing circle segments
 - 3D surface plot normalizes height by circumference in this mode
 
-## In Progress
-
-### Square-Circle Formal Verification (Rocq)
-- 8-case geometric decomposition for centered square and circle
-- Definitions of geometric primitives (sectors, triangles, segment areas)
-- Case analysis and main area formula
-- Target: Rocq 8.20+
+### Centered Square-Circle Formal Verification (Rocq)
+- Closed-form overlap area for a centered circle and square (three regimes)
+- Proved equal to the double integral of the overlap region's indicator
+- Non-negativity, bounds by circle and square area, joint continuity
+- No admitted proofs or project axioms; built with Rocq 9.0 + Coquelicot 3.4
 
 ## Planned
 
@@ -43,6 +41,7 @@ For complex polygons with many vertices:
 
 ### Extended Formal Verification
 Potential future proofs:
+- Off-center square-circle configuration (the 8 positional cases)
 - General convex polygon case
 - Specific regular polygon cases (triangle, hexagon)
 - Boundary mode correctness
